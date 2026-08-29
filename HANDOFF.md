@@ -22,6 +22,26 @@
 | B4 隐私声明 | ✅ README「隐私声明」节 |
 | macOS 产物 A5 | ⏳ 需 macOS/CI（release.yml 已就绪），签名公证需 Apple 账号 |
 
+### ⚠️ CI 三端产物的最后一步（需要用户账号，本机无法代办）
+
+本机（Windows）**无 gh CLI、无已存 GitHub 凭据、无 git 远程**，因此 `release.yml` 尚未真实执行过 —— macOS dmg/zip 与 Linux AppImage/deb 的 CI 产物验证被阻在此。换到有账号的机器后，执行以下命令即可闭合（约 20-30 分钟出全平台安装包）：
+
+```bash
+# 方式一：GitHub CLI（推荐）
+winget install GitHub.cli && gh auth login
+gh repo create boxkit --private --source . --push          # 建私有仓并推送 main
+git tag v1.0.0 && git push origin v1.0.0                    # 触发 release.yml
+gh run watch                                                # 观察三端矩阵构建
+gh release download v1.0.0                                  # 拉取 dmg/zip/AppImage/deb 产物
+
+# 方式二：手动
+# GitHub 建空私有仓 → git remote add origin <url> → git push -u origin main --tags
+# Actions 页查看 Release 工作流，产物自动挂到 Release
+
+# 验收标准：Release 资产应含 BoxKit-1.0.0-arm64.dmg/.x64.dmg、对应 zip、
+# BoxKit-1.0.0.AppImage、boxkit_1.0.0_amd64.deb、BoxKit Setup 1.0.0.exe、latest*.yml
+```
+
 **新踩坑（重要）**：
 
 12. **electron-builder 下载 electron zip 走 GitHub 直连会 10 分钟超时**：`.npmrc` 已写 `electron_mirror` 与 `electron_builder_binaries_mirror`，且 `electron-builder.yml` 加了 `electronDownload.mirror`。打包时仍建议导出 `ELECTRON_MIRROR` 环境变量（pnpm 的构建脚本不继承 shell 环境变量，失败时手动 `node node_modules/electron/install.js`）。
