@@ -14,7 +14,7 @@
 | 快捷键录制控件（设置→通用）：点击录制→按下组合键→自动保存；globalShortcut 注册失败返回冲突提示（`configSet` 返回 `ConfigSetResult{settings, hotkeyError}`） | ✅ |
 | 插件市场客户端：设置→插件→「已安装/插件市场」分段切换；市场卡片（logo/作者/安装数/版本比对「可更新」）；安装走下载→暂存→权限确认复用链路；`marketFetch`/`marketInstall` IPC；市场地址可在设置修改（默认 `http://127.0.0.1:8080`） | ✅ |
 | 市场后台 `server/`：SpringBoot 2.7.18 + MyBatis-Plus 3.5.3.2 + Sa-Token 1.39 + MySQL 8（H2 演示 profile 兜底）；市场搜索/详情/下载计数（公开）+ 注册/登录/me/上传 .bkx（zip 解析 plugin.json+logo）；schema.sql/data.sql 幂等自建表 + 官方插件 seed（storage/plugins/*.bkx） | ✅ `mvn package` 通过；H2 profile 全链路 API 实测（列表/中文搜索/下载计数/注册登录 BCrypt+Sa-Token/上传/未登录 401 全部通过） |
-| GitHub CI 三端：私有仓 `niocoders/boxkit`（设备码授权流程打通，token 在 `D:/workspace/boxkit/.gh-token`）；`ci.yml` 三端（typecheck/test/build/smoke）**全绿（Linux 真机冒烟通过 → C2 .desktop 解析已验证）**；`release.yml` 首轮 Windows/macOS job 成功、Linux 因缺 homepage 失败 → 已修复重跑 | ✅/⏳ 重跑结果待验收 |
+| GitHub CI 三端：私有仓 `niocoders/boxkit`（设备码授权流程打通，token 在 `D:/workspace/boxkit/.gh-token`）；`ci.yml` 三端（typecheck/test/build/smoke）**全绿（Linux 真机冒烟通过 → C2 .desktop 解析已验证）**；`release.yml` 触发 v1.0.0 → **success，11 个资产全部产出并下载到 `D:/workspace/boxkit/ci-artifacts/` 验收通过**（arm64/x64 dmg、arm64/x64 mac.zip、AppImage、deb、NSIS exe、win zip、latest*.yml×3；dmg/ELF/deb/PE/zip 魔数与清单 sha512/size 均核对） | ✅ 三端打包闭环 |
 
 **新踩坑（接上轮编号）**：
 
