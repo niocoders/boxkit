@@ -132,6 +132,7 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   ipcMain.on(IPC.searchHide, () => getMainWindow()?.hide());
+  ipcMain.on(IPC.uiOpenSettings, () => openSettingsWindow());
   ipcMain.on(IPC.searchInput, (_e, text: string) => pluginHost.forwardSubInput(String(text ?? "")));
   ipcMain.on(IPC.pluginExit, () => pluginHost.outPlugin());
 

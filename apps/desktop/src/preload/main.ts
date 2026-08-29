@@ -11,6 +11,7 @@ const api = {
   query: (text: string) => ipcRenderer.invoke(IPC.searchQuery, text),
   execute: (result: unknown) => ipcRenderer.invoke(IPC.searchExecute, result),
   hide: () => ipcRenderer.send(IPC.searchHide),
+  openSettings: () => ipcRenderer.send(IPC.uiOpenSettings),
   sendInput: (text: string) => ipcRenderer.send(IPC.searchInput, text),
   exitPlugin: () => ipcRenderer.send(IPC.pluginExit),
   onPluginState: (cb: (s: unknown) => void) => {

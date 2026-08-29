@@ -60,9 +60,11 @@ console.log(`[dev] vite dev server → ${viteUrl}`);
 
 let electronProc;
 const startElectron = () => {
+  // Windows 下 .bin/electron 是无扩展名 sh 脚本无法 spawn；用 node 跑 electron 的 cli.js
+  const electronCli = path.join(appRoot, "node_modules/electron/cli.js");
   electronProc = spawn(
-    path.join(appRoot, "node_modules/.bin/electron"),
-    [".", "--no-sandbox"],
+    process.execPath,
+    [electronCli, ".", "--no-sandbox"],
     {
       cwd: appRoot,
       stdio: "inherit",

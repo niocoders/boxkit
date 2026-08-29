@@ -4,6 +4,7 @@ export interface BoxkitBridge {
   query(text: string): Promise<SearchResult[]>;
   execute(result: SearchResult): Promise<{ ok: boolean; message?: string }>;
   hide(): void;
+  openSettings(): void;
   sendInput(text: string): void;
   exitPlugin(): void;
   onPluginState(cb: (s: PluginModeState) => void): () => void;

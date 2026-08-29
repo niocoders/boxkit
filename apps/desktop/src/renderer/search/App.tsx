@@ -303,6 +303,16 @@ export function App() {
         {mode === "search" && !expanded && <span>→ 副命令</span>}
         {mode === "search" && expanded && <span>← 返回</span>}
         <span>{mode === "plugin" ? "Esc 返回" : "Esc 隐藏"}</span>
+        <span className="spacer" />
+        {mode === "search" && (
+          <span
+            className="f-entry"
+            title="插件市场与设置"
+            onClick={() => boxkit.openSettings()}
+          >
+            ⚙ 设置 / 市场
+          </span>
+        )}
       </div>
 
       {toast && <div className="toast">{toast}</div>}

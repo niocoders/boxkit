@@ -11,6 +11,7 @@ export const IPC = {
   pluginExit: "plugin:exit", // renderer → main：点击返回按钮退出插件
   pluginState: "plugin:state", // main → search renderer：搜索/插件模式切换
   uiToast: "ui:toast", // main → renderer：气泡通知
+  uiOpenSettings: "ui:open-settings", // renderer → main：底栏入口打开设置窗
 
   // —— 配置（settings renderer ↔ main，search 也会读取）——
   configGet: "config:get",

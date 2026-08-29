@@ -6,15 +6,30 @@
 }
 
 :root {
-  --bg: #14161b;
-  --panel: #1b1e25;
-  --bg-soft: rgba(255, 255, 255, 0.05);
-  --bg-hover: rgba(255, 255, 255, 0.09);
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #e8eaf0;
-  --text-dim: #9aa0ae;
-  --accent: #5b8cff;
-  --danger: #ff6b6b;
+  /* uTools 浅色（默认），跟随系统深色 */
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --bg-soft: #f0f2f5;
+  --bg-hover: #e8f3fc;
+  --border: #ebedf0;
+  --text: #333333;
+  --text-dim: #999999;
+  --accent: #4a90d9;
+  --danger: #e5484d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161b;
+    --panel: #1b1e25;
+    --bg-soft: rgba(255, 255, 255, 0.05);
+    --bg-hover: rgba(255, 255, 255, 0.09);
+    --border: rgba(255, 255, 255, 0.08);
+    --text: #e8eaf0;
+    --text-dim: #9aa0ae;
+    --accent: #5b8cff;
+    --danger: #ff6b6b;
+  }
 }
 
 html,

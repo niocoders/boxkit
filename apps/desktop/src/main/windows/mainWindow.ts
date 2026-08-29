@@ -83,7 +83,11 @@ export function showMainWindow(): void {
   if (!win.isVisible()) {
     const { workArea } = screen.getPrimaryDisplay();
     const [w] = win.getSize();
-    win.setPosition(Math.round(workArea.x + (workArea.width - w) / 2), workArea.y + 120);
+    // uTools 式：屏幕上方约 15% 处垂直居中
+    win.setPosition(
+      Math.round(workArea.x + (workArea.width - w) / 2),
+      workArea.y + Math.round(workArea.height * 0.15),
+    );
   }
   win.show();
   win.focus();
