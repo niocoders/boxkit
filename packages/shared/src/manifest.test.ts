@@ -38,6 +38,40 @@ describe("plugin.json 清单校验", () => {
     expect(r.ok).toBe(false);
   });
 
+  it("uTools 风格清单：pluginName 自动归一化为 name+displayName", () => {
+    const m = parseManifest({
+      pluginName: "Utools Demo 插件",
+      description: "示例",
+      version: "1.0.0",
+      main: "index.html",
+      features: [{ code: "note", explain: "便签", cmds: ["note"] }],
+    });
+    expect(m.name).toBe("utools-demo");
+    expect(m.displayName).toBe("Utools Demo 插件");
+  });
+
+  it("uTools 纯中文 pluginName → 稳定哈希 slug", () => {
+    const m = parseManifest({
+      pluginName: "聚合翻译",
+      version: "1.0.0",
+      features: [{ code: "main", explain: "翻译", cmds: ["翻译"] }],
+    });
+    expect(m.name).toMatch(/^[a-z0-9][a-z0-9-]*$/);
+    expect(m.displayName).toBe("聚合翻译");
+  });
+
+  it("uTools 正则 cmd 的 minNum 归一为 minLength", () => {
+    const m = parseManifest({
+      pluginName: "Regex Demo",
+      version: "1.0.0",
+      features: [
+        { code: "r", explain: "正则", cmds: [{ type: "regex", match: "^\\d+$", minNum: 6 }] },
+      ],
+    });
+    const cmd = m.features[0].cmds[1 - 1] as { minLength?: number };
+    expect(cmd.minLength).toBe(6);
+  });
+
   it("regex cmd 缺 match 拒绝", () => {
     const r = safeParseManifest({
       ...valid,

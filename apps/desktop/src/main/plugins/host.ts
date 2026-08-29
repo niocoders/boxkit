@@ -2,6 +2,7 @@ import {
   BrowserWindow,
   WebContentsView,
   clipboard,
+  dialog,
   ipcMain,
   screen,
   session,
@@ -236,12 +237,17 @@ export class PluginHost {
 
     const view = new WebContentsView({
       webPreferences: {
+        // uTools 兼容运行模型：插件页面/预载具备 Node 能力、与 preload 同上下文
         preload: this.preloadPath,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
+        nodeIntegration: true,
+        contextIsolation: false,
+        sandbox: false,
         partition,
         spellcheck: false,
+        // 链式加载插件自带 preload（绝对路径经 argv 传入，见 preload/plugin.ts）
+        additionalArguments: [
+          `--boxkit-plugin-preload=${plugin.manifest.preload ? path.join(plugin.dir, plugin.manifest.preload) : ""}`,
+        ],
       },
     });
     view.setBackgroundColor("#00000000");
@@ -421,6 +427,101 @@ export class PluginHost {
     ipcMain.handle(IPC.pkDisplaySize, (e) => {
       this.requirePermission(this.senderPlugin(e), "screen");
       return screen.getPrimaryDisplay().workAreaSize;
+    });
+
+    // ————— uTools 兼容层（window.utools） —————
+
+    ipcMain.on(IPC.pkHideMain, () => getMainWindow()?.hide());
+    ipcMain.on(IPC.pkShowMain, () => {
+      const w = getMainWindow();
+      w?.show();
+      w?.focus();
+    });
+
+    ipcMain.handle(IPC.pkOpenPath, (e, p: string) => {
+      this.requirePermission(this.senderPlugin(e), "shell");
+      return shell.openPath(String(p));
+    });
+
+    ipcMain.on(IPC.pkDisplayFull, (e, which: "primary" | "all") => {
+      this.requirePermission(this.senderPlugin(e), "screen");
+      // Electron Display 对象可直接序列化
+      e.returnValue =
+        which === "all"
+          ? screen.getAllDisplays()
+          : screen.getPrimaryDisplay();
+    });
+
+    // pouchdb 风格文档存储（同步 IPC）：kv 值为 { rev, data }
+    interface StoredDoc { rev: number; data: unknown }
+
+    ipcMain.on(IPC.pkDbDocGet, (e, key: string) => {
+      const p = this.senderPlugin(e);
+      if (!p) { e.returnValue = null; return; }
+      const kv = this.manager.db(p.manifest.name);
+      const stored = kv.get(key) as StoredDoc | null;
+      e.returnValue = stored
+        ? { _id: key.slice(5), _rev: String(stored.rev), data: stored.data }
+        : null;
+    });
+
+    ipcMain.on(IPC.pkDbDocPut, (e, key: string, doc: { _id?: string; _rev?: string; data?: unknown }) => {
+      const p = this.senderPlugin(e);
+      if (!p || !key.startsWith("_doc:")) { e.returnValue = { ok: false, error: "无效的文档" }; return; }
+      const kv = this.manager.db(p.manifest.name);
+      const id = key.slice(5);
+      if (!id) { e.returnValue = { ok: false, error: "缺少 _id" }; return; }
+      const stored = kv.get(key) as StoredDoc | null;
+      if (stored && doc?._rev !== undefined && String(stored.rev) !== String(doc._rev)) {
+        e.returnValue = { ok: false, error: "conflict" };
+        return;
+      }
+      const nextRev = (stored?.rev ?? 0) + 1;
+      kv.put(key, { rev: nextRev, data: doc?.data ?? {} });
+      e.returnValue = { ok: true, id, rev: String(nextRev) };
+    });
+
+    ipcMain.on(IPC.pkDbDocRemove, (e, key: string, doc: { _id?: string; _rev?: string }) => {
+      const p = this.senderPlugin(e);
+      if (!p || !key.startsWith("_doc:")) { e.returnValue = { ok: false, error: "无效的文档" }; return; }
+      const kv = this.manager.db(p.manifest.name);
+      const stored = kv.get(key) as StoredDoc | null;
+      if (!stored) { e.returnValue = { ok: true }; return; }
+      if (doc?._rev !== undefined && String(stored.rev) !== String(doc._rev)) {
+        e.returnValue = { ok: false, error: "conflict" };
+        return;
+      }
+      kv.remove(key);
+      e.returnValue = { ok: true };
+    });
+
+    ipcMain.on(IPC.pkDbDocAll, (e) => {
+      const p = this.senderPlugin(e);
+      if (!p) { e.returnValue = []; return; }
+      const all = this.manager.db(p.manifest.name).all();
+      const docs = all
+        .filter((item) => item.key.startsWith("_doc:"))
+        .map((item) => {
+          const stored = item.value as StoredDoc;
+          return { _id: item.key.slice(5), _rev: String(stored?.rev ?? 0), data: stored?.data };
+        });
+      e.returnValue = docs;
+    });
+
+    ipcMain.on(IPC.pkDialogOpenSync, (e, args: { kind: "open"; options: Electron.OpenDialogOptions }) => {
+      const p = this.senderPlugin(e);
+      if (!p) { e.returnValue = { canceled: true, filePaths: [] }; return; }
+      const win = getMainWindow() ?? undefined;
+      const r = dialog.showOpenDialogSync(win as BrowserWindow, args.options ?? {});
+      e.returnValue = { canceled: !r, filePaths: r ?? [] };
+    });
+
+    ipcMain.on(IPC.pkDialogSaveSync, (e, args: { kind: "save"; options: Electron.SaveDialogOptions }) => {
+      const p = this.senderPlugin(e);
+      if (!p) { e.returnValue = { canceled: true, filePath: undefined }; return; }
+      const win = getMainWindow() ?? undefined;
+      const r = dialog.showSaveDialogSync(win as BrowserWindow, args.options ?? {});
+      e.returnValue = { canceled: !r, filePath: r };
     });
   }
 }

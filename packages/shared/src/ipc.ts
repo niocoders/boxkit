@@ -66,6 +66,17 @@ export const IPC = {
   pkOpenExternal: "pk:open-external",
   pkResize: "pk:resize",
   pkDisplaySize: "pk:display-size",
+  // —— uTools 兼容层（window.utools）——
+  pkHideMain: "pk:hide-main", // utools.hideMainWindow()
+  pkShowMain: "pk:show-main", // utools.showMainWindow()
+  pkOpenPath: "pk:open-path", // utools.openPath(path)
+  pkDisplayFull: "pk:display-full", // utools.getPrimaryDisplay()/getAllDisplays()
+  pkDbDocGet: "pk:db-doc:get", // utools.db.get(id)（同步 IPC）
+  pkDbDocPut: "pk:db-doc:put", // utools.db.put(doc)（同步 IPC）
+  pkDbDocRemove: "pk:db-doc:remove", // utools.db.remove(doc)（同步 IPC）
+  pkDbDocAll: "pk:db-doc:all", // utools.db.allDocs()（同步 IPC）
+  pkDialogOpenSync: "pk:dialog:open-sync", // utools.showOpenDialog（同步 IPC）
+  pkDialogSaveSync: "pk:dialog:save-sync", // utools.showSaveDialog（同步 IPC）
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];
