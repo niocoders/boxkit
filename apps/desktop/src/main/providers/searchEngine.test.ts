@@ -70,10 +70,38 @@ describe("searchQuery", () => {
     expect(rs[0].kind).toBe("plugin");
   });
 
-  it("空输入返回功能目录", () => {
+  it("空输入返回功能目录（插件/命令优先，可含应用）", () => {
     const rs = searchQuery("", deps);
     expect(rs.length).toBeGreaterThan(0);
-    expect(rs.every((r) => r.kind === "plugin" || r.kind === "command")).toBe(true);
+    expect(rs.every((r) => ["plugin", "command", "app"].includes(r.kind))).toBe(true);
+    // 插件功能必须出现在目录里
+    expect(rs.some((r) => r.kind === "plugin" && r.featureCode === "timestamp")).toBe(true);
+  });
+
+  it("空输入时最近使用排在最前", () => {
+    const rs = searchQuery("", {
+      ...deps,
+      usage: { "app:/Applications/WeChat.app": { count: 3, last: Date.now() } },
+    });
+    expect(rs[0].id).toBe("app:/Applications/WeChat.app");
+  });
+
+  it("使用频率为命中结果加权", () => {
+    const plain = searchQuery("微信", deps);
+    const boosted = searchQuery("微信", {
+      ...deps,
+      usage: { "app:/Applications/WeChat.app": { count: 5, last: Date.now() } },
+    });
+    const a = plain.find((r) => r.id === "app:/Applications/WeChat.app")!;
+    const b = boosted.find((r) => r.id === "app:/Applications/WeChat.app")!;
+    expect(b.score).toBeGreaterThan(a.score);
+  });
+
+  it("插件结果携带全部关键字（副命令）", () => {
+    const rs = searchQuery("时间", deps);
+    const hit = rs.find((r) => r.featureCode === "timestamp");
+    expect(hit?.pluginCmds).toContain("时间戳");
+    expect(hit?.pluginCmds).toContain("ts");
   });
 
   it("无结果时提供网络搜索兜底", () => {

@@ -45,6 +45,12 @@ const api = {
     removeDevPath: (dir: string) => ipcRenderer.send(IPC.pluginRemoveDevPath, dir),
   },
 
+  // 插件市场
+  market: {
+    fetch: (keyword: string) => ipcRenderer.invoke(IPC.marketFetch, keyword),
+    install: (pluginId: string) => ipcRenderer.invoke(IPC.marketInstall, pluginId),
+  },
+
   // 授权
   licenseState: () => ipcRenderer.invoke(IPC.licenseState),
   activate: (key: string) => ipcRenderer.invoke(IPC.licenseActivate, key),

@@ -25,7 +25,12 @@ export interface EngineDeps {
   apps: EngineApp[];
   commands: EngineCommand[];
   features: EngineFeatureRef[];
+  /** 使用频率统计（id → 次数/最近使用），用于排序加权与「最近使用」 */
+  usage?: Record<string, { count: number; last: number }>;
 }
+
+/** 空输入时「最近使用」最多条数 */
+export const RECENT_LIMIT = 8;
 
 const regexCache = new Map<string, RegExp | null>();
 
@@ -66,12 +71,22 @@ export const MAX_RESULTS = 20;
 
 export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
   const q = text.trim();
+  const usage = deps.usage ?? {};
   const results: SearchResult[] = [];
 
   if (!q) {
-    // 空输入：展示插件入口 + 系统命令（功能目录）
-    for (const f of deps.features.slice(0, 8)) {
-      results.push({
+    // 空输入：uTools 式「最近使用」优先，其次插件功能目录 + 系统命令
+    const recentIds = Object.entries(usage)
+      .filter(([, u]) => u.count > 0)
+      .sort((a, b) => b[1].last - a[1].last || b[1].count - a[1].count)
+      .slice(0, RECENT_LIMIT)
+      .map(([id]) => id);
+    const byId = new Map<string, SearchResult>();
+    const collect = (r: SearchResult) => {
+      if (!byId.has(r.id)) byId.set(r.id, r);
+    };
+    for (const f of deps.features) {
+      collect({
         id: `plugin:${f.pluginId}:${f.feature.code}`,
         title: f.feature.explain,
         subtitle: f.displayName,
@@ -80,30 +95,43 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
         score: 30,
         pluginId: f.pluginId,
         featureCode: f.feature.code,
+        pluginCmds: f.feature.cmds.map((c) => (typeof c === "string" ? c : c.explain ?? f.feature.explain)),
       });
     }
-    for (const c of deps.commands.slice(0, 6)) {
-      results.push({
-        id: `cmd:${c.id}`,
-        title: c.title,
-        builtinIcon: c.builtinIcon,
-        kind: "command",
-        score: 29,
-      });
+    for (const a of deps.apps) {
+      collect({ id: `app:${a.path}`, title: a.name, subtitle: a.path, icon: a.icon, kind: "app", score: 29 });
     }
-    return results;
+    for (const c of deps.commands) {
+      collect({ id: `cmd:${c.id}`, title: c.title, builtinIcon: c.builtinIcon, kind: "command", score: 28 });
+    }
+    const recent: SearchResult[] = [];
+    for (const id of recentIds) {
+      const hit = byId.get(id);
+      if (hit) recent.push(hit);
+    }
+    // 最近使用排前面；不足则用功能目录补齐
+    for (const r of recent) results.push(r);
+    for (const r of byId.values()) {
+      if (results.length >= RECENT_LIMIT) break;
+      if (!recent.includes(r)) results.push(r);
+    }
+    return results.slice(0, RECENT_LIMIT);
   }
+
+  // 频率加权：用过的结果按次数提升（上限 15，不破坏精确度优先序）
+  const boost = (id: string) => Math.min(15, (usage[id]?.count ?? 0) * 2);
 
   for (const app of deps.apps) {
     const s = matchScore(q, app.name);
     if (s !== null) {
+      const id = `app:${app.path}`;
       pushResult(results, {
-        id: `app:${app.path}`,
+        id,
         title: app.name,
         subtitle: app.path,
         icon: app.icon,
         kind: "app",
-        score: s,
+        score: s + boost(id),
       });
     }
   }
@@ -115,12 +143,13 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
       if (s !== null && (best === null || s > best)) best = s + 5; // 关键字略加权
     }
     if (best !== null) {
+      const id = `cmd:${c.id}`;
       pushResult(results, {
-        id: `cmd:${c.id}`,
+        id,
         title: c.title,
         builtinIcon: c.builtinIcon,
         kind: "command",
-        score: best,
+        score: best + boost(id),
       });
     }
   }
@@ -150,16 +179,20 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
       }
     }
     if (best !== null) {
+      const id = `plugin:${f.pluginId}:${f.feature.code}`;
       pushResult(results, {
-        id: `plugin:${f.pluginId}:${f.feature.code}`,
+        id,
         title: f.feature.explain,
         subtitle: f.displayName,
         icon: f.logo,
         kind: "plugin",
-        score: best,
+        score: best + boost(id),
         pluginId: f.pluginId,
         featureCode: f.feature.code,
         cmdType: bestType,
+        pluginCmds: f.feature.cmds.map((c) =>
+          typeof c === "string" ? c : c.explain ?? f.feature.explain,
+        ),
       });
     }
   }

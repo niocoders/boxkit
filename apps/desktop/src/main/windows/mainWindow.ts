@@ -24,10 +24,14 @@ function resolveSearchPage(): { url?: string; file?: string } {
 
 export function createMainWindow(): BrowserWindow {
   win = new BrowserWindow({
-    width: 720,
-    height: 560,
-    minWidth: 640,
-    minHeight: 480,
+    // uTools 式固定面板：不拉伸、不最小化，尺寸恒定
+    width: 760,
+    height: 600,
+    minWidth: 760,
+    minHeight: 600,
+    maxWidth: 760,
+    maxHeight: 600,
+    resizable: false,
     show: false,
     frame: false,
     transparent: true,

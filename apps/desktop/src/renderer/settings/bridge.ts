@@ -1,14 +1,16 @@
 import type {
   AppSettings,
+  ConfigSetResult,
   InstallPreview,
   LicenseState,
+  MarketPlugin,
   PluginListItem,
   UpdateState,
 } from "@boxkit/shared";
 
 export interface SettingsBridge {
   configGet(): Promise<AppSettings>;
-  configSet(patch: Partial<AppSettings>): Promise<AppSettings>;
+  configSet(patch: Partial<AppSettings>): Promise<ConfigSetResult>;
   plugins: {
     list(): Promise<PluginListItem[]>;
     installPreview(): Promise<{ preview: InstallPreview; conflict: string } | null>;
@@ -18,6 +20,12 @@ export interface SettingsBridge {
     uninstall(name: string): Promise<{ ok: boolean; error?: string }>;
     addDevPath(): Promise<{ ok: boolean; error?: string }>;
     removeDevPath(dir: string): void;
+  };
+  market: {
+    fetch(keyword: string): Promise<MarketPlugin[] | { error: string }>;
+    install(
+      pluginId: string,
+    ): Promise<{ preview: InstallPreview; conflict?: string } | { error: string } | null>;
   };
   licenseState(): Promise<LicenseState>;
   activate(key: string): Promise<{ ok: boolean; state?: LicenseState; error?: string }>;

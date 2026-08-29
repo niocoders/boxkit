@@ -11,6 +11,7 @@ import { createTray, destroyTray } from "./services/tray.js";
 import { initUpdater, SMOKING } from "./services/updater.js";
 import { initLicenseOnBoot, licenseState, canUsePlugins } from "./services/license.js";
 import { pluginManager } from "./plugins/manager.js";
+import { usageFlush } from "./core/usage.js";
 import { cleanupStaging } from "./plugins/staging.js";
 import { PluginHost } from "./plugins/host.js";
 import { appProvider } from "./providers/apps.js";
@@ -65,6 +66,7 @@ function bootstrap(): void {
     setQuitting(true);
     unregisterAll();
     pluginManager.flushAllDb();
+    usageFlush();
     destroyTray();
   });
 

@@ -40,6 +40,10 @@ export interface SearchResult {
   cmdType?: "text" | "regex" | "over";
   /** kind=web 时有效：搜索词 */
   webQuery?: string;
+  /** kind=plugin 时有效：该 feature 的全部关键字（uTools 式副命令，→ 展开候选） */
+  pluginCmds?: string[];
+  /** 执行时透传给插件的 payload（副命令选中时为其关键字文本） */
+  payload?: string;
 }
 
 export type SearchMode = "search" | "plugin";
@@ -89,6 +93,34 @@ export interface AppSettings {
   firstLaunchAt: number;
   disabledPlugins: string[];
   devPluginPaths: string[];
+  /** 插件市场服务地址；null = 内置默认（本地开发 http://127.0.0.1:8080） */
+  marketUrl: string | null;
+}
+
+/** configSet 的返回：设置 + 快捷键应用结果（冲突时给出提示） */
+export interface ConfigSetResult {
+  settings: AppSettings;
+  hotkeyError: string | null;
+}
+
+/** 插件市场条目（服务端 /api/market/plugins 返回）。 */
+export interface MarketPlugin {
+  pluginId: string;
+  displayName: string;
+  version: string;
+  description?: string;
+  author?: string;
+  downloads: number;
+  /** logo 的 URL（服务端静态资源） */
+  logoUrl?: string;
+  /** .bkx 包下载地址 */
+  fileUrl: string;
+  /** 文件大小（字节），用于展示 */
+  fileSize?: number;
+  /** 相对客户端已安装版本的提示（客户端本地比对后覆盖） */
+  installed?: boolean;
+  updatable?: boolean;
+  localVersion?: string;
 }
 
 export type LicenseMode = "trial" | "trial-expired" | "licensed" | "license-expired";

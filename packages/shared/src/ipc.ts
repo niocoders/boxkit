@@ -32,6 +32,10 @@ export const IPC = {
   licenseActivate: "license:activate",
   licenseDeactivate: "license:deactivate",
 
+  // —— 插件市场（settings renderer ↔ main）——
+  marketFetch: "market:fetch", // invoke：拉取市场列表（keyword 参数）
+  marketInstall: "market:install", // invoke：下载市场插件并进入暂存，返回 InstallPreview
+
   // —— 更新（settings renderer ↔ main）——
   updaterState: "updater:state", // invoke：当前状态快照
   updaterCheck: "updater:check",

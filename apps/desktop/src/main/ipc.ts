@@ -2,12 +2,15 @@ import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import path from "node:path";
 import {
   IPC,
+  type ConfigSetResult,
   type InstallPreview,
   type SearchResult,
 } from "@boxkit/shared";
 import { logger } from "./core/logger.js";
 import { settings } from "./core/config.js";
 import { logsDir } from "./core/paths.js";
+import { usageAll, usageRecord } from "./core/usage.js";
+import { marketService } from "./services/market.js";
 import { appProvider } from "./providers/apps.js";
 import { getSystemCommands, runSystemCommand } from "./providers/commands.js";
 import { searchQuery, type EngineDeps } from "./providers/searchEngine.js";
@@ -39,6 +42,7 @@ function engineDeps(): EngineDeps {
         feature: f,
       })),
     ),
+    usage: usageAll(),
   };
 }
 
@@ -70,6 +74,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.searchExecute, async (_e, result: SearchResult) => {
     if (!result || typeof result.id !== "string") return { ok: false };
     try {
+      usageRecord(result.id);
       switch (result.kind) {
         case "app": {
           if (!result.id.startsWith("app:")) return { ok: false };
@@ -105,7 +110,7 @@ export function registerIpc(deps: IpcDeps): void {
           pluginHost.openPlugin(p, {
             code: feature.code,
             type: result.cmdType ?? "text",
-            payload: result.webQuery ?? "",
+            payload: result.payload ?? result.webQuery ?? "",
           });
           return { ok: true };
         }
@@ -132,7 +137,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   // ————— 配置 —————
   ipcMain.handle(IPC.configGet, () => settings.get());
-  ipcMain.handle(IPC.configSet, (_e, patch: Record<string, unknown>) => {
+  ipcMain.handle(IPC.configSet, (_e, patch: Record<string, unknown>): ConfigSetResult => {
     const safe: Record<string, unknown> = {};
     if (typeof patch.hotkey === "string") safe.hotkey = patch.hotkey;
     if (typeof patch.autostart === "boolean") safe.autostart = patch.autostart;
@@ -140,10 +145,26 @@ export function registerIpc(deps: IpcDeps): void {
     if (patch.updateFeed === null || typeof patch.updateFeed === "string") {
       safe.updateFeed = patch.updateFeed;
     }
+    if (patch.marketUrl === null || typeof patch.marketUrl === "string") {
+      const u = patch.marketUrl;
+      safe.marketUrl = typeof u === "string" && u.trim() && !/^https?:\/\//i.test(u.trim())
+        ? `http://${u.trim()}`
+        : u;
+    }
     const next = settings.set(safe);
-    applyHotkey(toggleViaHotkey);
+    const hotkey = applyHotkey(toggleViaHotkey);
     applyAutostart();
-    return next;
+    return { settings: next, hotkeyError: hotkey.error };
+  });
+
+  // ————— 插件市场 —————
+  ipcMain.handle(IPC.marketFetch, (_e, keyword: unknown) =>
+    marketService.fetchMarket(typeof keyword === "string" ? keyword : ""),
+  );
+  ipcMain.handle(IPC.marketInstall, async (_e, pluginId: unknown) => {
+    const preview = await marketService.installFromMarket(String(pluginId ?? ""));
+    if (!preview) return null;
+    return preview;
   });
 
   // ————— 插件管理 —————

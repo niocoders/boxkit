@@ -12,6 +12,7 @@ const DEFAULTS: AppSettings = {
   firstLaunchAt: Date.now(),
   disabledPlugins: [],
   devPluginPaths: [],
+  marketUrl: null,
 };
 
 type Listener = (s: AppSettings) => void;

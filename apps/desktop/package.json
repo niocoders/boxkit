@@ -6,6 +6,7 @@
   "author": "BoxKit Authors <dev@boxkit.app>",
   "main": "dist/main/index.js",
   "desktopName": "boxkit.desktop",
+  "homepage": "https://github.com/niocoders/boxkit",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",

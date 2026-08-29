@@ -4,6 +4,12 @@ import { boxkit } from "./bridge.js";
 
 type Mode = "search" | "plugin";
 
+/** 展开的副命令状态：uTools 式「→ 展开插件关键字」 */
+interface Expanded {
+  base: SearchResult;
+  cmds: string[];
+}
+
 function ResultIcon({ r }: { r: SearchResult }) {
   if (r.icon) {
     return <img className="r-icon" src={r.icon} alt="" draggable={false} />;
@@ -14,12 +20,35 @@ function ResultIcon({ r }: { r: SearchResult }) {
   return <span className="r-icon r-avatar">{(r.title?.[0] ?? "?").toUpperCase()}</span>;
 }
 
+/** 关键字命中高亮（uTools 蓝色高亮风格） */
+function Highlight({ text, query }: { text: string; query: string }) {
+  const q = query.trim();
+  if (!q) return <>{text}</>;
+  const idx = text.toLowerCase().indexOf(q.toLowerCase());
+  if (idx < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="hl">{text.slice(idx, idx + q.length)}</mark>
+      {text.slice(idx + q.length)}
+    </>
+  );
+}
+
+const KIND_BADGE: Record<string, { label: string; dim?: boolean }> = {
+  plugin: { label: "插件" },
+  app: { label: "应用", dim: true },
+  command: { label: "命令", dim: true },
+  web: { label: "网络", dim: true },
+};
+
 export function App() {
   const [mode, setMode] = useState<Mode>("search");
   const [pluginState, setPluginState] = useState<PluginModeState>({ mode: "search" });
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [selected, setSelected] = useState(0);
+  const [expanded, setExpanded] = useState<Expanded | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -32,6 +61,7 @@ export function App() {
       if (seq !== seqRef.current) return; // 过期响应丢弃
       setResults(rs);
       setSelected(0);
+      setExpanded(null);
     } catch {
       setResults([]);
     }
@@ -104,32 +134,67 @@ export function App() {
     [results, mode],
   );
 
+  const listCount = expanded ? expanded.cmds.length : results.length;
+
+  const executeCurrent = useCallback(() => {
+    if (expanded) {
+      const cmd = expanded.cmds[selected];
+      if (cmd === undefined) return;
+      void boxkit.execute({ ...expanded.base, payload: cmd, cmdType: "over" });
+      setTimeout(() => boxkit.hide(), 150);
+      return;
+    }
+    executeAt(selected);
+  }, [expanded, selected, executeAt]);
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      if (mode === "plugin") boxkit.exitPlugin();
-      else boxkit.hide();
+      if (mode === "plugin") {
+        boxkit.exitPlugin();
+      } else if (expanded) {
+        setExpanded(null); // 先收起副命令
+      } else {
+        boxkit.hide();
+      }
       return;
     }
     if (mode === "plugin") return; // 输入转发给插件，不拦截
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelected((i) => Math.min(results.length - 1, i + 1));
+      setSelected((i) => Math.min(listCount - 1, i + 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setSelected((i) => Math.max(0, i - 1));
+    } else if (e.key === "ArrowRight") {
+      // uTools 式：→ 展开选中插件的副命令（全部关键字）
+      if (!expanded) {
+        const r = results[selected];
+        if (r?.kind === "plugin" && r.pluginCmds && r.pluginCmds.length > 1) {
+          e.preventDefault();
+          setExpanded({ base: r, cmds: r.pluginCmds });
+          setSelected(0);
+        }
+      }
+    } else if (e.key === "ArrowLeft") {
+      if (expanded) {
+        e.preventDefault();
+        setExpanded(null);
+        setSelected(0);
+      }
     } else if (e.key === "Enter") {
       e.preventDefault();
-      executeAt(selected);
+      executeCurrent();
     }
   };
 
   useEffect(() => {
     const el = listRef.current?.querySelector(".r-item.active");
     el?.scrollIntoView({ block: "nearest" });
-  }, [selected]);
+  }, [selected, expanded]);
 
   const p = pluginState.plugin;
+  const showList = mode === "search" && (expanded ? expanded.cmds.length > 0 : results.length > 0);
   return (
     <div className="shell">
       <div className="header">
@@ -160,32 +225,74 @@ export function App() {
         {mode === "plugin" && <span className="p-name">{p?.displayName}</span>}
       </div>
 
-      {mode === "search" && results.length > 0 && (
+      {showList && (
         <div className="results" ref={listRef}>
-          {results.map((r, i) => (
-            <div
-              key={r.id}
-              className={`r-item ${i === selected ? "active" : ""}`}
-              onMouseEnter={() => setSelected(i)}
-              onClick={() => executeAt(i)}
-            >
-              <ResultIcon r={r} />
-              <div className="r-main">
-                <div className="r-title">{r.title}</div>
-                {r.subtitle && <div className="r-sub">{r.subtitle}</div>}
+          {expanded && <div className="section-label">「{expanded.base.title}」的关键字</div>}
+          {(expanded ? expanded.cmds : results).map((item, i) => {
+            if (expanded) {
+              const cmd = item as string;
+              return (
+                <div
+                  key={`${expanded.base.id}:${cmd}`}
+                  className={`r-item ${i === selected ? "active" : ""}`}
+                  onMouseEnter={() => setSelected(i)}
+                  onClick={() => {
+                    void boxkit.execute({ ...expanded.base, payload: cmd, cmdType: "over" });
+                    setTimeout(() => boxkit.hide(), 150);
+                  }}
+                >
+                  <ResultIcon r={expanded.base} />
+                  <div className="r-main">
+                    <div className="r-title">{cmd}</div>
+                    <div className="r-sub">{expanded.base.title} · 以此关键字进入插件</div>
+                  </div>
+                  <span className="r-badge dim">副命令</span>
+                </div>
+              );
+            }
+            const r = item as SearchResult;
+            const badge = KIND_BADGE[r.kind];
+            const expandable = r.kind === "plugin" && (r.pluginCmds?.length ?? 0) > 1;
+            return (
+              <div
+                key={r.id}
+                className={`r-item ${i === selected ? "active" : ""}`}
+                onMouseEnter={() => setSelected(i)}
+                onClick={() => executeAt(i)}
+              >
+                <ResultIcon r={r} />
+                <div className="r-main">
+                  <div className="r-title">
+                    <Highlight text={r.title} query={query} />
+                  </div>
+                  {r.subtitle && (
+                    <div className="r-sub">
+                      <Highlight text={r.subtitle} query={query} />
+                    </div>
+                  )}
+                </div>
+                {badge && <span className={`r-badge ${badge.dim ? "dim" : ""}`}>{badge.label}</span>}
+                {expandable && (
+                  <span
+                    className="r-expand"
+                    title="展开全部关键字 (→)"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpanded({ base: r, cmds: r.pluginCmds! });
+                      setSelected(0);
+                    }}
+                  >
+                    ›
+                  </span>
+                )}
               </div>
-              {r.kind === "plugin" && <span className="r-badge">插件</span>}
-              {r.kind === "app" && <span className="r-badge dim">应用</span>}
-              {r.kind === "command" && <span className="r-badge dim">命令</span>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {mode === "search" && results.length === 0 && (
-        <div className="empty">
-          {query ? "没有匹配结果" : "输入以搜索；安装更多插件请打开设置"}
-        </div>
+      {mode === "search" && !showList && (
+        <div className="empty">{query ? "没有匹配结果" : "输入以搜索；插件市场在设置中"}</div>
       )}
 
       {mode === "plugin" && <div className="plugin-hint">Esc 返回搜索面板 · 内容区域由插件提供</div>}
@@ -193,6 +300,8 @@ export function App() {
       <div className="footer">
         <span>↑↓ 选择</span>
         <span>↵ 打开</span>
+        {mode === "search" && !expanded && <span>→ 副命令</span>}
+        {mode === "search" && expanded && <span>← 返回</span>}
         <span>{mode === "plugin" ? "Esc 返回" : "Esc 隐藏"}</span>
       </div>
 
