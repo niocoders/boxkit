@@ -1,0 +1,83 @@
+import { describe, expect, it } from "vitest";
+import { matchScore, searchQuery, type EngineDeps } from "./searchEngine.js";
+
+const deps: EngineDeps = {
+  apps: [
+    { name: "Visual Studio Code", path: "/Applications/Visual Studio Code.app" },
+    { name: "微信", path: "/Applications/WeChat.app" },
+  ],
+  commands: [
+    { id: "sleep", title: "睡眠", keywords: ["sleep", "休眠"], builtinIcon: "🌙" },
+    { id: "settings", title: "BoxKit 设置", keywords: ["settings", "设置"], builtinIcon: "⚙️" },
+  ],
+  features: [
+    {
+      pluginId: "devtoolbox",
+      displayName: "DevToolbox",
+      feature: { code: "timestamp", explain: "时间戳转换", cmds: ["时间戳", "ts"] },
+    },
+    {
+      pluginId: "devtoolbox",
+      displayName: "DevToolbox",
+      feature: {
+        code: "lucky",
+        explain: "运气数字",
+        cmds: [{ type: "regex", match: "^\\d{6}$", minLength: 6 }],
+      },
+    },
+  ],
+};
+
+describe("matchScore", () => {
+  it("精确 > 前缀 > 包含", () => {
+    expect(matchScore("sleep", "sleep")!).toBeGreaterThan(matchScore("sl", "sleep")!);
+    expect(matchScore("sl", "sleep")!).toBeGreaterThan(matchScore("le", "sleep")!);
+    expect(matchScore("zz", "sleep")).toBeNull();
+  });
+  it("大小写不敏感", () => {
+    expect(matchScore("SLEEP", "sleep")).toBe(100);
+  });
+});
+
+describe("searchQuery", () => {
+  it("应用命中并携带路径", () => {
+    const rs = searchQuery("vis", deps);
+    expect(rs[0].kind).toBe("app");
+    expect(rs[0].id).toBe("app:/Applications/Visual Studio Code.app");
+  });
+
+  it("中文关键字匹配插件 feature", () => {
+    const rs = searchQuery("时间", deps);
+    const hit = rs.find((r) => r.kind === "plugin");
+    expect(hit?.featureCode).toBe("timestamp");
+    expect(hit?.pluginId).toBe("devtoolbox");
+    expect(hit?.score).toBeGreaterThan(0);
+  });
+
+  it("regex feature 命中", () => {
+    const rs = searchQuery("123456", deps);
+    const hit = rs.find((r) => r.kind === "plugin" && r.featureCode === "lucky");
+    expect(hit).toBeDefined();
+  });
+
+  it("regex feature 长度不足不命中", () => {
+    const rs = searchQuery("123", deps);
+    expect(rs.find((r) => r.featureCode === "lucky")).toBeUndefined();
+  });
+
+  it("插件关键字加权高于应用包含匹配", () => {
+    const rs = searchQuery("ts", deps);
+    expect(rs[0].kind).toBe("plugin");
+  });
+
+  it("空输入返回功能目录", () => {
+    const rs = searchQuery("", deps);
+    expect(rs.length).toBeGreaterThan(0);
+    expect(rs.every((r) => r.kind === "plugin" || r.kind === "command")).toBe(true);
+  });
+
+  it("无结果时提供网络搜索兜底", () => {
+    const rs = searchQuery("zzzznothing", { ...deps, apps: [], features: [], commands: [] });
+    expect(rs.some((r) => r.kind === "web")).toBe(true);
+  });
+});

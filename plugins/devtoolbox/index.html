@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DevToolbox</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="bar">
+        <div class="tabs">
+          <button data-tab="timestamp" class="tab">时间戳</button>
+          <button data-tab="json" class="tab">JSON</button>
+          <button data-tab="uuid" class="tab">UUID</button>
+        </div>
+        <span class="spacer"></span>
+      </div>
+
+      <!-- 时间戳 -->
+      <section id="tab-timestamp" class="panel">
+        <div class="grid">
+          <label>当前时间</label>
+          <div class="line">
+            <input id="now-human" readonly />
+            <button class="copy" data-copy="now-human">复制</button>
+          </div>
+          <label>Unix 秒</label>
+          <div class="line">
+            <input id="now-sec" readonly />
+            <button class="copy" data-copy="now-sec">复制</button>
+          </div>
+          <label>Unix 毫秒</label>
+          <div class="line">
+            <input id="now-ms" readonly />
+            <button class="copy" data-copy="now-ms">复制</button>
+          </div>
+        </div>
+        <div class="divider">双向转换（也可直接在搜索框输入）</div>
+        <div class="line">
+          <input id="conv-in" placeholder="输入时间戳(秒/毫秒) 或 日期，如 2033-01-01 00:00:00" />
+          <button id="conv-swap" class="ghost">⇄</button>
+        </div>
+        <div class="line">
+          <input id="conv-out" readonly placeholder="结果" />
+          <button class="copy" data-copy="conv-out">复制</button>
+        </div>
+      </section>
+
+      <!-- JSON -->
+      <section id="tab-json" class="panel hidden">
+        <textarea id="json-in" placeholder='粘贴 JSON，如 {"a":1}' spellCheck="false"></textarea>
+        <div class="line json-actions">
+          <button id="json-pretty" class="ghost">格式化(缩进2)</button>
+          <button id="json-min" class="ghost">压缩</button>
+          <button id="json-copy" class="ghost">复制结果</button>
+          <span id="json-status" class="status"></span>
+        </div>
+        <textarea id="json-out" readonly placeholder="结果" spellCheck="false"></textarea>
+      </section>
+
+      <!-- UUID -->
+      <section id="tab-uuid" class="panel hidden">
+        <div class="line">
+          <span>生成数量：</span>
+          <input id="uuid-count" type="number" min="1" max="50" value="5" />
+          <button id="uuid-gen" class="ghost">生成 v4</button>
+        </div>
+        <textarea id="uuid-out" readonly spellCheck="false"></textarea>
+      </section>
+    </div>
+    <script src="./main.js"></script>
+  </body>
+</html>

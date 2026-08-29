@@ -1,0 +1,15 @@
+{
+  "name": "@boxkit/shared",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BoxKit 共享协议：IPC 通道、类型定义、插件清单校验",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ipc": "./src/ipc.ts"
+  },
+  "dependencies": {
+    "zod": "^4.5.2"
+  }
+}

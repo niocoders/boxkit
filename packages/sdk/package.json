@@ -1,0 +1,10 @@
+{
+  "name": "@boxkit/sdk",
+  "version": "1.0.0",
+  "description": "BoxKit 插件开发 SDK：类型定义与运行时辅助（发布到 npm 供插件作者使用）",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

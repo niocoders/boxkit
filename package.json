@@ -1,0 +1,32 @@
+{
+  "name": "boxkit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BoxKit — 跨平台效率启动器与插件平台（类 uTools）",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @boxkit/desktop dev",
+    "build": "pnpm --filter @boxkit/desktop build",
+    "start": "pnpm --filter @boxkit/desktop start",
+    "pack": "pnpm --filter @boxkit/desktop pack",
+    "dist": "pnpm --filter @boxkit/desktop dist",
+    "typecheck": "tsc -p apps/desktop/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "icons": "node tools/gen-icons.mjs",
+    "license": "node tools/license-cli/index.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  },
+  "packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319"
+}

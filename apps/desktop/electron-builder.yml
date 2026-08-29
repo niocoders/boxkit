@@ -1,0 +1,98 @@
+appId: com.boxkit.desktop
+productName: BoxKit
+copyright: Copyright © 2026 BoxKit Authors
+
+directories:
+  output: release
+  buildResources: build
+
+# GitHub 直连不稳时强制走 npmmirror（也可用环境变量 ELECTRON_MIRROR 覆盖）
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
+
+files:
+  - dist/**/*
+  - package.json
+
+# 官方插件随包分发（生产环境从 resources/plugins 读取）；托盘/应用图标进 resources 根目录
+extraResources:
+  - from: ../../plugins
+    to: plugins
+  - from: resources
+    to: .
+
+# 生成 latest*.yml 更新清单（electron-updater 依赖）；上传用 CI 或自有渠道
+# 客户端运行时可在设置页/BOXKIT_UPDATE_URL 覆盖 feed 地址
+publish:
+  provider: generic
+  url: https://updates.boxkit.app/${os}/${arch}
+
+asar: true
+compression: maximum
+
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  # 面板应用：不显示 Dock 图标（与托盘常驻形态一致）
+  extendInfo:
+    LSUIElement: true
+    NSAppleEventsUsageDescription: BoxKit 需要控制系统事件以提供锁屏等系统命令。
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  darkModeSupport: true
+  # .bkx 插件包双击安装
+  fileAssociations:
+    - ext: bkx
+      name: BoxKit Plugin Package
+      role: Viewer
+  # 公证：设置环境变量 APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID 后
+  # 将 notarize 改为 true（或使用 CI 环境变量注入），详见 README「签名与公证」
+  notarize: false
+
+dmg:
+  title: BoxKit ${version}
+  contents:
+    - { x: 130, y: 220 }
+    - { x: 410, y: 220, type: link, path: /Applications }
+
+win:
+  target:
+    - nsis
+    - zip
+  icon: build/icon.png
+  # .bkx 插件包双击安装（NSIS 注册扩展名；打开走 second-instance argv）
+  fileAssociations:
+    - ext: bkx
+      name: BoxKit Plugin Package
+      role: Viewer
+  # Windows 签名需自备代码签名证书，配置 certificateFile/certificatePassword 后启用
+  # signingHashAlgorithms: [sha256]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # 托盘常驻应用：装完不强制立刻启动，由用户用 Alt+Space 唤起
+  runAfterFinish: true
+
+linux:
+  target:
+    - AppImage
+    - deb
+    # tar.gz 是唯一可在 Windows 主机直接构建的 Linux 目标（CI 上仍产出 AppImage/deb）
+    - tar.gz
+  category: Utility
+  icon: build/icon.png
+  # 包名 @boxkit/desktop 不能直接用作 Linux 可执行名
+  executableName: BoxKit
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # .bkx 插件包关联（写入生成的 .desktop）
+  mimeTypes:
+    - application/x-bkx
