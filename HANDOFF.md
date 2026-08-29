@@ -27,10 +27,10 @@
 本机（Windows）**无 gh CLI、无已存 GitHub 凭据、无 git 远程**，因此 `release.yml` 尚未真实执行过 —— macOS dmg/zip 与 Linux AppImage/deb 的 CI 产物验证被阻在此。换到有账号的机器后，执行以下命令即可闭合（约 20-30 分钟出全平台安装包）：
 
 ```bash
-# 方式一：GitHub CLI（推荐）
+# 方式一：GitHub CLI（推荐）—— 本地已打好 v1.0.0 tag，无需再打
 winget install GitHub.cli && gh auth login
 gh repo create boxkit --private --source . --push          # 建私有仓并推送 main
-git tag v1.0.0 && git push origin v1.0.0                    # 触发 release.yml
+git push origin v1.0.0                                     # 触发 release.yml
 gh run watch                                                # 观察三端矩阵构建
 gh release download v1.0.0                                  # 拉取 dmg/zip/AppImage/deb 产物
 
