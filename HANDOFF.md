@@ -1,57 +1,31 @@
 # BoxKit 交接文档（换机继续开发必读）
 
-> 更新时间：2026-08-29（第二次更新：Windows 机器完成三端打包收尾）
-> 项目路径：`boxkit/`（pnpm monorepo）
-> 现状：**macOS MVP 已跑通**；**Windows 机器上完成 C1/C2 多端适配 + Windows 打包全链路验证 + 更新端到端验证**；Linux 产物与 macOS 产物需 CI（流水线已配置好）。
+> 更新时间：2026-08-30（第三次更新：uTools 体验对标 + 插件市场后台 + CI 三端打通）
+> 项目路径：`boxkit/`（pnpm monorepo + `server/` Spring Boot 后台）
+> 现状：**客户端已对标 uTools**（固定面板/高亮/频率排序/最近使用/副命令/快捷键录制/插件市场），**市场后台 SpringBoot 2.7 + MP + Sa-Token + MySQL 已跑通全链路 API**，**GitHub CI 三端已打通**（私有仓 niocoders/boxkit）。
 
 ---
 
-## 〇、2026-08-29 换机后进展（本节新增）
+## 〇、2026-08-30 uTools 对标进展（本节最新）
 
 | 事项 | 结果 |
 |---|---|
-| Windows 适配 C1：开始菜单 `.lnk` 扫描（PowerShell 批量解析，84 个应用）、Win 系统命令 5 条、`.bkx` 双击安装（second-instance argv + 冷启动 argv 链路） | ✅ 冒烟 `ok:true, apps:84` |
-| Linux 适配 C2：XDG `.desktop` 解析（含 Flatpak 目录、zh 本地化名、hicolor/pixmaps 图标）、Linux 命令 3 条 | ✅ 代码就绪（真机行为待 CI/Linux 环境验证） |
-| Windows 打包 A1/A2：NSIS + zip + latest.yml 全部产出 | ✅ `apps/desktop/release/` |
-| Linux 打包 A1/A2：AppImage 在 Windows 主机不可构建（electron-builder 平台限制，实测缺 mksquashfs）；`tar.gz` 兜底包本机产出并验证 | ✅ 部分本机 + CI 补全 |
-| 打包产物回归 A3：打包后 BoxKit.exe 冒烟（托盘图标/插件/icon.png 均在 resources 内） | ✅ `BOXKIT_SMOKE_OK ok:true apps:84` |
-| 更新端到端 A4：本地更新服务器 + 打包应用静默检查 → 发现 1.1.0 → 全量下载 → 落盘 pending | ✅ 全链路打通 |
-| E1 文档：README.md + docs/plugin-dev.md（含权限表、API 速览、.bkx 打包） | ✅ |
-| E3 CI：`.github/workflows/ci.yml`（三端 typecheck/test/build/smoke）+ `release.yml`（tag 触发三端构建发布） | ✅ 待 push 后跑通首次流水线 |
-| E4 git init + 首次提交 | ✅ |
-| B4 隐私声明 | ✅ README「隐私声明」节 |
-| macOS 产物 A5 | ⏳ 需 macOS/CI（release.yml 已就绪），签名公证需 Apple 账号 |
+| 面板 UX 对标 uTools：固定 760×600 不可拉伸、关键字高亮（mark 蓝）、使用频率加权排序、空输入「最近使用」（usage.json 持久化）、副命令展开（`→` 展开插件全部关键字，`←`/Esc 收起） | ✅ 冒烟 `ok:true apps:84`，测试 28/28 |
+| 快捷键录制控件（设置→通用）：点击录制→按下组合键→自动保存；globalShortcut 注册失败返回冲突提示（`configSet` 返回 `ConfigSetResult{settings, hotkeyError}`） | ✅ |
+| 插件市场客户端：设置→插件→「已安装/插件市场」分段切换；市场卡片（logo/作者/安装数/版本比对「可更新」）；安装走下载→暂存→权限确认复用链路；`marketFetch`/`marketInstall` IPC；市场地址可在设置修改（默认 `http://127.0.0.1:8080`） | ✅ |
+| 市场后台 `server/`：SpringBoot 2.7.18 + MyBatis-Plus 3.5.3.2 + Sa-Token 1.39 + MySQL 8（H2 演示 profile 兜底）；市场搜索/详情/下载计数（公开）+ 注册/登录/me/上传 .bkx（zip 解析 plugin.json+logo）；schema.sql/data.sql 幂等自建表 + 官方插件 seed（storage/plugins/*.bkx） | ✅ `mvn package` 通过；H2 profile 全链路 API 实测（列表/中文搜索/下载计数/注册登录 BCrypt+Sa-Token/上传/未登录 401 全部通过） |
+| GitHub CI 三端：私有仓 `niocoders/boxkit`（设备码授权流程打通，token 在 `D:/workspace/boxkit/.gh-token`）；`ci.yml` 三端（typecheck/test/build/smoke）**全绿（Linux 真机冒烟通过 → C2 .desktop 解析已验证）**；`release.yml` 首轮 Windows/macOS job 成功、Linux 因缺 homepage 失败 → 已修复重跑 | ✅/⏳ 重跑结果待验收 |
 
-### ⚠️ CI 三端产物的最后一步（需要用户账号，本机无法代办）
+**新踩坑（接上轮编号）**：
 
-本机（Windows）**无 gh CLI、无已存 GitHub 凭据、无 git 远程**，因此 `release.yml` 尚未真实执行过 —— macOS dmg/zip 与 Linux AppImage/deb 的 CI 产物验证被阻在此。换到有账号的机器后，执行以下命令即可闭合（约 20-30 分钟出全平台安装包）：
-
-```bash
-# 方式一：GitHub CLI（推荐）—— 本地已打好 v1.0.0 tag，无需再打
-winget install GitHub.cli && gh auth login
-gh repo create boxkit --private --source . --push          # 建私有仓并推送 main
-git push origin v1.0.0                                     # 触发 release.yml
-gh run watch                                                # 观察三端矩阵构建
-gh release download v1.0.0                                  # 拉取 dmg/zip/AppImage/deb 产物
-
-# 方式二：手动
-# GitHub 建空私有仓 → git remote add origin <url> → git push -u origin main --tags
-# Actions 页查看 Release 工作流，产物自动挂到 Release
-
-# 验收标准：Release 资产应含 BoxKit-1.0.0-arm64.dmg/.x64.dmg、对应 zip、
-# BoxKit-1.0.0.AppImage、boxkit_1.0.0_amd64.deb、BoxKit Setup 1.0.0.exe、latest*.yml
-```
-
-**新踩坑（重要）**：
-
-12. **electron-builder 下载 electron zip 走 GitHub 直连会 10 分钟超时**：`.npmrc` 已写 `electron_mirror` 与 `electron_builder_binaries_mirror`，且 `electron-builder.yml` 加了 `electronDownload.mirror`。打包时仍建议导出 `ELECTRON_MIRROR` 环境变量（pnpm 的构建脚本不继承 shell 环境变量，失败时手动 `node node_modules/electron/install.js`）。
-13. **没有 `publish` 配置就不生成 latest.yml**（electron-builder 26）：已在 yml 加 `publish: {provider: generic, url: …}`，只生成清单不上传。
-14. `linux.desktop` 配置项已废除（26 版校验直接报错）；Linux 可执行名需显式 `linux.executableName: BoxKit`（包名 `@boxkit/desktop` 的 `@` 非法），package.json 补 `desktopName`。
-15. **托盘图标曾经打不进包**：`extraResources` 原来只拷了 plugins；已补 `from: resources, to: .`（trayTemplate/icon.png 进 resources 根目录）。非 mac 平台托盘用彩色 `icon.png`（黑色模板图标在任务栏不可见）。
-16. 打包后的 Windows GUI 程序冒烟：用 `BoxKit.exe --enable-logging BOXKIT_SMOKE=1` 可在终端看到 `BOXKIT_SMOKE_OK` 输出。
-17. `compression: maximum` 下 NSIS/zip 单平台构建约 15 分钟，耐心等。
-18. **AppImage/deb 无法在 Windows 主机构建**（实测报错 `spawn ...\darwin\mksquashfs ENOENT`）；`tar.gz` 目标走 app-builder 归档器，Windows 可直接构建，已加入 linux targets 作为兜底。Linux/macOS 产物统一走 `release.yml` CI。
-19. pnpm hoisted 布局下 `apps/desktop/node_modules/electron` 可能出现一份**没有 dist 的副本**（electron-builder 运行后出现），`npx electron` 会因此卡在重新下载二进制。修复：`cd apps/desktop/node_modules/electron && ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" node install.js`。
+20. **Windows 命令行传 JSON 给 curl.exe 会吞引号**（Node execFileSync 也一样）→ GitHub API 400 "Problems parsing JSON"。解法：`--data-binary @file` 临时文件传 body。
+21. **GitHub 设备码授权流程**：client_id 用 GitHub CLI 公开的 `178c6fc778ccc68e1d6a`，scope `repo workflow`；本机访问 GitHub 必须走用户代理 `127.0.0.1:7897`（curl/git 都要；git 走 `HTTPS_PROXY` 环境变量即可）。
+22. `mvn` 用户全局 settings.xml 是阿里云**旧地址**（缺新包）→ 项目级 `.mvn/settings.xml` 用新地址 `https://maven.aliyun.com/repository/public`，`mvn -s` 指定，不动全局。
+23. sa-token 1.37.3 阿里云还没同步 → 用 1.39.0（API 兼容）。Java 11 不支持 record；MyBatis-Plus LambdaQueryWrapper 需要 getter（实体要手写 accessors）。
+24. H2 兼容 MySQL 模式跑 schema 注意：`user` 是 H2 保留字（表已改名 `market_user`）；`spring.sql.init.encoding: utf-8` 必须配，否则中文 Windows（GBK）下 data.sql 乱码。
+25. electron-builder Linux target 要求 package.json 有 `homepage`，否则 CI 报 "Please specify project homepage"。
+26. `pnpm/action-setup@v4` 的 `version` 入参与 package.json `packageManager` 同时存在会报 "Multiple versions of pnpm" → 删 workflow 里的 version。
+27. **Windows CWD 陷阱**：Git Bash 的 CWD 会跨命令保持，`git rm --cached`/`.gitignore` 重定向很容易写错目录；提交前务必 `git ls-tree -r HEAD` 验证没有把 `server/target` 之类带进去。
 
 ---
 

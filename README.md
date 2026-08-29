@@ -1,13 +1,17 @@
 # BoxKit — 跨平台效率启动器与插件平台
 
-类 uTools 的面板式启动器：全局快捷键唤起搜索面板，聚合**应用 / 系统命令 / 插件功能 / 网络搜索兜底**，插件以沙箱 Web 视图运行，支持 `.bkx` 插件包分发与离线授权激活。
+对标 uTools 的面板式启动器：全局快捷键唤起搜索面板，聚合**应用 / 系统命令 / 插件功能 / 网络搜索兜底**，插件以沙箱 Web 视图运行，内置**插件市场**（客户端 + Spring Boot 后台），支持 `.bkx` 插件包分发与离线授权激活。
 
-## 特性一览
+## 特性一览（uTools 对标）
 
-- **搜索面板**：托盘常驻 + 全局快捷键（mac `Option+Space`，Win/Linux `Alt+Space`），失焦自动隐藏
+- **搜索面板**：uTools 式固定 760×600 面板、托盘常驻 + 全局快捷键（mac `Option+Space`，Win/Linux `Alt+Space`，设置页**录制控件**可改，冲突检测提示）、失焦自动隐藏
+- **智能排序**：使用频率加权 + 空输入展示「最近使用」（uTools 行为一致）
+- **关键字高亮**：命中部分蓝色高亮
+- **副命令**：插件结果按 `→` 展开该功能全部关键字（uTools 交互），`←`/Esc 收起
 - **应用扫描**：macOS `.app` / Windows 开始菜单 `.lnk`（PowerShell 批量解析目标）/ Linux XDG `.desktop`（含 Flatpak 导出目录），后台预热图标
 - **系统命令**：睡眠 / 锁屏 / 清空废纸篓 / 任务管理器（Win）/ 资源管理器重启（Win）等，按平台提供
-- **插件系统**：zod 强校验清单、`.bkx` 安装（拖入/双击/设置页）、权限逐项确认、沙箱视图 + `bk-plugin://` 协议、开发目录热重载、子输入框接管
+- **插件系统**：zod 强校验清单、`.bkx` 安装（拖入/双击/设置页）、权限逐项确认、沙箱视图 + `bk-plugin://` 协议、开发目录热重载（自动弹 DevTools）、子输入框接管
+- **插件市场**：设置 → 插件 → 插件市场，卡片列表/搜索/安装/更新（本地版本比对）；后台见 [`server/`](server/)（Spring Boot 2.7 + MyBatis-Plus + Sa-Token + MySQL）
 - **官方插件**：剪贴板历史、DevToolbox（时间戳/JSON/UUID）
 - **授权系统**：Ed25519 离线验签、14 天试用期（设备绑定）、safeStorage 加密存储、CLI 签发
 - **自动更新**：electron-updater + 本地更新服务器示例
@@ -126,6 +130,19 @@ BoxKit **不收集、不上传任何用户数据**：
 
 - 应用扫描、插件数据、授权信息、日志均保存在本机 userData 目录（`%APPDATA%/BoxKit`、`~/Library/Application Support/BoxKit`、`~/.config/BoxKit`）。
 - 「检查更新」「网络搜索」「需要联网的插件」是仅有的出网行为；崩溃上报默认关闭，可在设置 → 通用中开启（开启后仅上报堆栈与系统版本，见 `services/crash.ts`）。
+
+## 插件市场后台（server/）
+
+[`server/`](server/) 是插件市场的服务端：**Spring Boot 2.7.18 + MyBatis-Plus 3.5.3 + Sa-Token 1.39 + MySQL 8**（Java 11+，仓库 `.mvn/settings.xml` 已配阿里云镜像）。
+
+```bash
+cd server
+mvn -s .mvn/settings.xml -DskipTests package
+MYSQL_PASSWORD=你的密码 java -jar target/market-server-1.0.0.jar   # 自动建库建表 + 官方插件 seed
+# 无 MySQL 时演示：java -Dspring.profiles.active=h2 -jar target/market-server-1.0.0.jar
+```
+
+API：市场搜索/详情/下载计数（公开）+ 注册/登录（Sa-Token，`boxkit-token` 请求头）+ 开发者上传 `.bkx`（自动解析清单与 logo）。详见 [server/README.md](server/README.md)。客户端默认连 `http://127.0.0.1:8080`，可在设置 → 通用 → 插件市场地址 修改。
 
 ## 插件开发
 
