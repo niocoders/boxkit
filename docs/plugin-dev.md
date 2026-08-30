@@ -167,7 +167,8 @@ BoxKit 的插件运行时与 uTools 同构：**插件页面与 preload 具备 No
   - 按键注入：`simulateKeyboardTap(key, ...modifiers)`（作用于当前焦点窗口）
   - 子窗口：`createBrowserWindow(url, options, callback)`（回调句柄提供 `send(channel, data)`）
   - 环境：`isDarkColors / getAPIVersion / getAppVersion`
-- 暂未支持（调用会抛错）：`redirect`、`fetchUserServerToken`（需 uTools 账号体系）
-- 差异说明：`screenCapture(cb)` 当前为全屏截图兜底（无区域裁剪 UI）
+- 跳转：`redirect({ cmd, payload? })`（按关键字跳到其他插件功能）
+- 账号：`fetchUserServerToken()`（返回 BoxKit 本地用户令牌——设备指纹 HMAC）
+- 截屏：`screenCapture(cb)`（隐藏面板 → 全屏遮罩拖拽选区 → PNG 回调，Esc 取消）
 
 安全说明：与 uTools 相同，插件具备 Node 能力意味着「安装即信任」——请只安装来源可信的插件；安装时的权限确认弹窗列出敏感能力。
