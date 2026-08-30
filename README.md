@@ -11,9 +11,8 @@
 - **应用扫描**：macOS `.app` / Windows 开始菜单 `.lnk`（PowerShell 批量解析目标）/ Linux XDG `.desktop`（含 Flatpak 导出目录），后台预热图标
 - **系统命令**：睡眠 / 锁屏 / 清空废纸篓 / 任务管理器（Win）/ 资源管理器重启（Win）等，按平台提供
 - **插件系统**：zod 强校验清单、`.bkx` 安装（拖入/双击/设置页）、权限逐项确认、沙箱视图 + `bk-plugin://` 协议、开发目录热重载（自动弹 DevTools）、子输入框接管
-- **插件市场**：设置 → 插件 → 插件市场，卡片列表/搜索/安装/更新（本地版本比对）；后台见 [`server/`](server/)（Spring Boot 2.7 + MyBatis-Plus + Sa-Token + MySQL）
+- **插件市场（双 Web 端）**：用户端门户 `http://127.0.0.1:8080/`（卡片浏览/搜索/**一键导入 BoxKit**/下载 .bkx）+ 管理端 `/admin.html`（上传发布/下架删除，无登录鉴权仅限内网）；客户端内置市场页（设置 → 插件），支持 `boxkit-market://install/<id>` 协议自动导入。后台见 [`server/`](server/)（Spring Boot 2.7 + MyBatis-Plus + MySQL）
 - **官方插件**：剪贴板历史、DevToolbox（时间戳/JSON/UUID）
-- **授权系统**：Ed25519 离线验签、14 天试用期（设备绑定）、safeStorage 加密存储、CLI 签发
 - **自动更新**：electron-updater + 本地更新服务器示例
 - **健壮性**：Sentry 崩溃上报（可选）+ 本地 crash 日志兜底、结构化日志
 
@@ -108,21 +107,6 @@ node tools/update-server/server.mjs apps/desktop/release 8964
 # 3. 放入更高版本的安装包并修改 latest(-mac).yml 模拟新版本 → 「检查更新」→ 下载 → 重启并更新
 ```
 
-## 授权与试用
-
-- 默认试用 14 天（设备绑定，标记在 userData 下轻混淆存储）。
-- 正式发放授权使用零依赖 CLI：
-
-```bash
-pnpm license keygen --out keys/          # 生成密钥对；私钥离线保管，绝不入库
-pnpm license issue --private keys/private.pem --email user@x.com --plan pro --days 365
-pnpm license show --key BK1.xxx.yyy      # 查看授权内容
-pnpm license verify --public keys/public.pem --key BK1.xxx.yyy [--device <machineId>]
-```
-
-**商用前必须**：用 `pnpm license keygen` 生成生产密钥对，把 `public.pem` 内容替换
-`apps/desktop/src/main/services/license.ts` 顶部的 `BOXKIT_LICENSE_PUBLIC_KEY` 后重新构建
-（仓库内置的是开发密钥）。客户端设置页输入 `BK1.…` 授权码即可激活。
 
 ## 隐私声明
 
