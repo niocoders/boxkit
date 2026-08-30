@@ -314,11 +314,6 @@ body {
 }
 
 /* ————— uTools 6 式空态网格 ————— */
-.header-spacer {
-  width: 32px;
-  flex: none;
-}
-
 .grid-scroll {
   flex: 1;
   overflow-y: auto;
@@ -329,7 +324,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 4px 6px;
+  padding: 10px 6px 6px;
 }
 .group-title {
   font-size: 13px;

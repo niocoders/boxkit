@@ -287,9 +287,7 @@ export function App() {
         )}
         {mode === "plugin" && p?.logo ? (
           <img className="p-logo" src={p.logo} alt="" draggable={false} />
-        ) : (
-          <span className="header-spacer" />
-        )}
+        ) : null}
         <input
           ref={inputRef}
           className="input"
@@ -309,7 +307,7 @@ export function App() {
       </div>
 
       {isGrid && (
-        <div className="grid-scroll" ref={listRef}>
+        <div className="grid-scroll grid-only" ref={listRef}>
           {gridGroups.map((g) => (
             <div className="grid-group" key={g.key}>
               <div className="group-head">
@@ -422,6 +420,7 @@ export function App() {
 
       {mode === "plugin" && <div className="plugin-hint">Esc 返回搜索面板 · 内容区域由插件提供</div>}
 
+      {!isGrid && (
       <div className="footer">
         <span>↑↓←→ 选择</span>
         <span>↵ 打开</span>
@@ -436,6 +435,7 @@ export function App() {
           </span>
         )}
       </div>
+      )}
 
       {toast && <div className="toast">{toast}</div>}
     </div>

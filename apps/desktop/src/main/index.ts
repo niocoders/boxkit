@@ -1,4 +1,5 @@
 import { app, protocol } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { IPC } from "@boxkit/shared";
 import { ensureDirs } from "./core/paths.js";
@@ -153,6 +154,24 @@ function onReady(): void {
     return;
   }
   showMainWindow();
+  // BOXKIT_PANEL_SHOT=<png路径>：展示面板数秒后离屏截图并退出（UI 对照/CI 用）
+  if (process.env.BOXKIT_PANEL_SHOT) {
+    const out = process.env.BOXKIT_PANEL_SHOT;
+    setTimeout(async () => {
+      try {
+        const w = getMainWindow();
+        if (!w) return app.exit(1);
+        const img = await w.webContents.capturePage();
+        fs.writeFileSync(out, img.toPNG());
+        console.log("PANEL_SHOT_OK", out);
+      } catch (e) {
+        logger.error("boot", "面板截图失败", e);
+        app.exit(1);
+      }
+      app.exit(0);
+    }, 3500);
+    return;
+  }
   // 冷启动参数可能带 .bkx（双击安装）；等主窗就绪后再提示
   const bkxArg = process.argv.slice(1).find((a) => /\.bkx$/i.test(a));
   if (bkxArg) setTimeout(() => handleBkxPath(bkxArg), 800);
