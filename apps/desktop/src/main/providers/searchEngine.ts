@@ -117,7 +117,8 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
     // 3) 市场精选：官方插件 + 打开市场入口
     const official = ["utools-demo", "devtoolbox", "clipboard-history"];
     for (const f of deps.features) {
-      if (official.includes(f.pluginId) && !recentIds.includes(`plugin:${f.pluginId}:${f.feature.code}`)) {
+      const gid = `plugin:${f.pluginId}:${f.feature.code}`;
+      if (official.includes(f.pluginId) && !recentIds.includes(gid) && !byId.has(gid)) {
         collect({
           id: `plugin:${f.pluginId}:${f.feature.code}`,
           title: f.feature.explain,
