@@ -152,17 +152,23 @@ const utools = {
   copyText(text: string) {
     void ipcRenderer.invoke(IPC.pkClipboardWrite, String(text ?? ""));
   },
-  copyImage(): void {
-    throw new Error("utools.copyImage 暂未支持");
+  /** 复制图片到剪贴板（PNG buffer，同步语义 fire-and-forget） */
+  copyImage(png: Buffer) {
+    void ipcRenderer.invoke(IPC.pkClipboardWriteImage, Buffer.from(png as unknown as ArrayBuffer));
+  },
+  /** 读取剪贴板图片 → PNG Buffer（异步） */
+  readClipboardImage(): Promise<Buffer | null> {
+    return ipcRenderer.invoke(IPC.pkClipboardReadImage);
   },
   readClipboardText(): Promise<string> {
     return ipcRenderer.invoke(IPC.pkClipboardRead);
   },
-  readClipboardImage(): Promise<null> {
-    return Promise.resolve(null); // 暂未支持
-  },
-  captureScreenshot(): never {
-    throw new Error("utools.captureScreenshot 暂未支持");
+  /** 截屏 → PNG Buffer（当前为全屏兜底实现，经回调返回） */
+  screenCapture(cb: (png: Buffer) => void): void {
+    void ipcRenderer
+      .invoke(IPC.pkScreenCapture)
+      .then((png: Buffer) => cb(Buffer.from(png)))
+      .catch((err: unknown) => console.error("[boxkit] screenCapture 失败:", err));
   },
 
   // —— 文档存储（pouchdb 风格，同步） ——
@@ -210,9 +216,6 @@ const utools = {
   },
   redirect(): never {
     throw new Error("utools.redirect 暂未支持（请使用 feature cmds 进入插件）");
-  },
-  screenCapture(): never {
-    throw new Error("utools.screenCapture 暂未支持");
   },
   simulateKeyboardTap(): never {
     throw new Error("utools.simulateKeyboardTap 暂未支持");

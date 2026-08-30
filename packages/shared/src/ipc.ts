@@ -64,6 +64,9 @@ export const IPC = {
   pkDbAll: "pk:db:all",
   pkClipboardRead: "pk:clipboard:read",
   pkClipboardWrite: "pk:clipboard:write",
+  pkClipboardWriteImage: "pk:clipboard:write-image", // utools.copyImage(pngBuffer)
+  pkClipboardReadImage: "pk:clipboard:read-image", // utools.readClipboardImage()
+  pkScreenCapture: "pk:screen-capture", // utools.screenCapture（全屏兜底实现）
   pkNotify: "pk:notify",
   pkOpenExternal: "pk:open-external",
   pkResize: "pk:resize",

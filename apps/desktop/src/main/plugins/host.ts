@@ -4,6 +4,8 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  nativeImage,
+  Notification,
   screen,
   session,
   shell,
@@ -408,9 +410,56 @@ export class PluginHost {
       clipboard.writeText(String(text));
     });
 
+    // uTools 兼容：剪贴板图片（PNG buffer）
+    ipcMain.handle(IPC.pkClipboardWriteImage, (e, png: Buffer) => {
+      this.requirePermission(this.senderPlugin(e), "clipboard");
+      const img = nativeImage.createFromBuffer(Buffer.from(png));
+      if (img.isEmpty()) throw new Error("无效的图片数据");
+      (clipboard as unknown as { writeImage(i: Electron.NativeImage): void }).writeImage(img);
+    });
+    ipcMain.handle(IPC.pkClipboardReadImage, (e) => {
+      this.requirePermission(this.senderPlugin(e), "clipboard");
+      const img = (clipboard as unknown as { readImage(): Electron.NativeImage }).readImage();
+      return img.isEmpty() ? null : img.toPNG();
+    });
+
+    // uTools 兼容：截屏（全屏兜底实现——返回主屏 PNG；区域选择 UI 暂未做）
+    ipcMain.handle(IPC.pkScreenCapture, async (e) => {
+      this.requirePermission(this.senderPlugin(e), "screen");
+      const primary = screen.getPrimaryDisplay();
+      const { desktopCapturer } = await import("electron");
+      const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: { width: primary.size.width, height: primary.size.height },
+      });
+      const src = sources.find((s) => s.display_id === String(primary.id)) ?? sources[0];
+      if (!src) throw new Error("找不到可截取的屏幕");
+      return src.thumbnail.toPNG();
+    });
+
     ipcMain.on(IPC.pkNotify, (e, body: string) => {
       const p = this.requirePermission(this.senderPlugin(e), "notify");
-      this.toast(`[${p.manifest.displayName}] ${String(body).slice(0, 120)}`);
+      const text = String(body).slice(0, 200);
+      try {
+        // uTools 语义是系统通知；Electron Notification 不可用时回退面板气泡
+        if (Notification.isSupported()) {
+          const n = new Notification({
+            title: p.manifest.displayName,
+            body: text,
+            silent: true,
+          });
+          n.on("click", () => {
+            const w = getMainWindow();
+            w?.show();
+            w?.focus();
+          });
+          n.show();
+        } else {
+          this.toast(`[${p.manifest.displayName}] ${text}`);
+        }
+      } catch {
+        this.toast(`[${p.manifest.displayName}] ${text}`);
+      }
     });
 
     ipcMain.handle(IPC.pkOpenExternal, (e, url: string) => {

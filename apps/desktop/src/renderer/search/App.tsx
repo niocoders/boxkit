@@ -297,7 +297,7 @@ export function App() {
           placeholder={
             mode === "plugin"
               ? pluginState.subinput?.placeholder ?? `${p?.displayName ?? "插件"}已启动（未接管搜索框）`
-              : "搜索应用、命令、插件，或粘贴文件、图片…"
+              : "搜索功能 / 粘贴文件、图片"
           }
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
