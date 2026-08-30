@@ -117,6 +117,10 @@ export interface MarketPlugin {
   logoUrl?: string;
   /** .bkx 包下载地址 */
   fileUrl: string;
+  /** 服务端字段：相对存储路径（客户端内部规范为 fileUrl） */
+  filePath?: string;
+  /** 服务端字段：最新版本号 */
+  latestVersion?: string;
   /** 文件大小（字节），用于展示 */
   fileSize?: number;
   /** 相对客户端已安装版本的提示（客户端本地比对后覆盖） */

@@ -10,8 +10,9 @@ import { applyHotkey, unregisterAll } from "./services/hotkey.js";
 import { applyAutostart } from "./services/autostart.js";
 import { createTray, destroyTray } from "./services/tray.js";
 import { initUpdater, SMOKING } from "./services/updater.js";
-import { initLicenseOnBoot, licenseState, canUsePlugins } from "./services/license.js";
 import { pluginManager } from "./plugins/manager.js";
+import { commitInstall } from "./plugins/staging.js";
+import { marketService } from "./services/market.js";
 import { usageFlush } from "./core/usage.js";
 import { cleanupStaging } from "./plugins/staging.js";
 import { PluginHost } from "./plugins/host.js";
@@ -45,6 +46,12 @@ if (!gotLock) {
 function bootstrap(): void {
   // 让插件可通过 UA 识别宿主版本
   app.userAgentFallback = `BoxKit/${app.getVersion()} ${app.userAgentFallback}`;
+  // 市场协议：Web 门户「导入到 BoxKit」按钮 → boxkit-market://install/<pluginId>
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient("boxkit-market", process.execPath, [path.resolve(process.argv[1])]);
+  } else {
+    app.setAsDefaultProtocolClient("boxkit-market");
+  }
   // 单实例：二次唤起 → 显示主窗（也用于 .bkx 安装回调）
   // Windows/Linux 下双击 .bkx 会以文件路径为参数拉起新实例，走 second-instance 的 argv
   app.on("second-instance", (_e, argv) => {
@@ -85,6 +92,30 @@ function handleBkxPath(filePath?: string): void {
   toast(`请在「插件」页点击「安装插件包」选择：${path.basename(filePath)}`);
 }
 
+/** 处理市场协议：boxkit-market://install/<pluginId> → 下载并自动导入（无需确认） */
+function handleMarketUrl(url?: string): void {
+  const m = url?.match(/^boxkit-market:\/\/install\/([a-z0-9][a-z0-9-]*)$/i);
+  if (!m) return;
+  const pluginId = m[1];
+  logger.info("boot", `市场协议导入: ${pluginId}`);
+  void (async () => {
+    try {
+      const r = await marketService.installFromMarket(pluginId);
+      if ("error" in r) {
+        toast(r.error);
+        return;
+      }
+      const manifest = await commitInstall(r.preview.stagingId);
+      pluginManager.reloadAll();
+      toast(`已从市场导入：${manifest.displayName} v${manifest.version}`);
+      logger.info("boot", `市场导入完成: ${manifest.name}`);
+    } catch (err) {
+      logger.error("boot", "市场导入失败", err);
+      toast("市场插件导入失败");
+    }
+  })();
+}
+
 function onReady(): void {
   ensureDirs();
   markLogFileReady();
@@ -98,13 +129,10 @@ function onReady(): void {
     applyAutostart();
   });
 
-  initLicenseOnBoot();
-
   // 主窗
   createMainWindow();
   pluginHost = new PluginHost(
     pluginManager,
-    canUsePlugins,
     toast,
     path.join(__dirname, "../preload/plugin.js"),
   );
@@ -145,12 +173,26 @@ function onReady(): void {
     initUpdater();
   }
 
-  // 首次启动：弹出主窗展示试用期提示
-  const st = licenseState();
-  logger.info("boot", `授权状态: ${st.mode}${st.daysLeft != null ? `（剩余 ${st.daysLeft} 天）` : ""}`);
-
   if (SMOKING) {
     smokeCheck();
+    return;
+  }
+  // BOXKIT_IMPORT_TEST=<pluginId>：无头验证市场自动导入链路（下载→安装→重载）
+  if (process.env.BOXKIT_IMPORT_TEST) {
+    setTimeout(async () => {
+      try {
+        const pid = process.env.BOXKIT_IMPORT_TEST as string;
+      const r = await marketService.installFromMarket(pid);
+        if ("error" in r) throw new Error(r.error);
+        const manifest = await commitInstall(r.preview.stagingId);
+        pluginManager.reloadAll();
+        const loaded = pluginManager.all().find((x) => x.manifest.name === manifest.name);
+        console.log(`IMPORT_TEST_OK ${manifest.name} v${manifest.version} logo=${loaded?.logoDataUrl ? "yes" : "no"}`);
+      } catch (err) {
+        console.log("IMPORT_TEST_FAIL", String(err));
+      }
+      app.exit(0);
+    }, 2500);
     return;
   }
   // BOXKIT_SHOT_TEST=<png路径|->：无头验证 screenCapture 内部链路（抓屏+DPR 裁剪）
@@ -194,9 +236,6 @@ function onReady(): void {
   // 冷启动参数可能带 .bkx（双击安装）；等主窗就绪后再提示
   const bkxArg = process.argv.slice(1).find((a) => /\.bkx$/i.test(a));
   if (bkxArg) setTimeout(() => handleBkxPath(bkxArg), 800);
-  if (st.mode === "trial" && st.daysLeft != null && st.daysLeft <= 14) {
-    setTimeout(() => toast(`BoxKit 试用期剩余 ${st.daysLeft} 天，可在设置中激活授权`), 1200);
-  }
 }
 
 /** BOXKIT_SMOKE=1：初始化完成后自检并退出（CI / 快速验证用） */
@@ -209,7 +248,6 @@ function smokeCheck(): void {
       ok: mainWin !== null && apps > 0,
       apps,
       plugins,
-      license: licenseState().mode,
       mainWindow: mainWin !== null,
       hotkey: settings.get().hotkey,
       platform: `${process.platform}/${process.arch}`,

@@ -63,6 +63,19 @@ public class MarketService {
                 .orderByDesc(PluginVersion::getVersion));
     }
 
+    /** 下架删除：清理入库记录与磁盘文件（找不到返回 false） */
+    public boolean delete(String pluginId) throws IOException {
+        Plugin p = byId(pluginId);
+        if (p == null) return false;
+        Path storage = Paths.get(storageDir).toAbsolutePath().normalize();
+        Path file = storage.resolve(p.filePath);
+        try { Files.deleteIfExists(file); } catch (IOException ignored) { }
+        versionMapper.delete(new LambdaQueryWrapper<PluginVersion>()
+                .eq(PluginVersion::getPluginId, pluginId));
+        pluginMapper.deleteById(p.getId());
+        return true;
+    }
+
     /** 发布/更新插件：解析 .bkx（zip 内含 plugin.json），存文件并入库。 */
     public Plugin publish(MultipartFile bkx, Long uploadedBy) throws IOException {
         byte[] manifestBytes = null;

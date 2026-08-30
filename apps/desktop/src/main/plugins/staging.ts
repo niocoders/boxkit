@@ -58,8 +58,20 @@ export function logoToDataUrl(file: string | undefined): string | undefined {
 async function extractArchive(src: string, dest: string): Promise<void> {
   fs.mkdirSync(dest, { recursive: true });
   if (process.platform === "win32") {
-    // Win10+ 自带 bsdtar，可解 zip
-    await execFileP("tar", ["-xf", src, "-C", dest]);
+    // Win10 内置 tar 的 zip 支持实测不可靠 → 用 PowerShell Expand-Archive（要求 .zip 后缀）
+    const zipCopy = path.join(dest, "__pkg.zip");
+    fs.copyFileSync(src, zipCopy);
+    const psPath = (v: string) => v.replace(/'/g, "''");
+    try {
+      await execFileP(
+        "powershell",
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+         `Expand-Archive -LiteralPath '${psPath(zipCopy)}' -DestinationPath '${psPath(dest)}' -Force`],
+        { timeout: 30000, windowsHide: true },
+      );
+    } finally {
+      fs.rmSync(zipCopy, { force: true });
+    }
   } else if (process.platform === "darwin") {
     await execFileP("ditto", ["-x", "-k", src, dest]);
   } else {
@@ -105,8 +117,22 @@ export async function stageInstall(
   }
 
   // 归一化：把插件根目录内容移到 staging/<id>/ 下
+  // Windows 上新写入目录可能被杀毒/索引短暂锁定 → rename 失败时退避重试，仍失败退化为递归复制
   const finalDir = path.join(stagingDir(), stagingId);
-  fs.renameSync(root, finalDir);
+  let moved = false;
+  for (let attempt = 0; attempt < 5 && !moved; attempt++) {
+    try {
+      fs.renameSync(root, finalDir);
+      moved = true;
+    } catch {
+      const delay = 200 * (attempt + 1);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+    }
+  }
+  if (!moved) {
+    fs.cpSync(root, finalDir, { recursive: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
   fs.rmSync(tmpExtract, { recursive: true, force: true });
 
   const installed = installedVersions.get(manifest.name);

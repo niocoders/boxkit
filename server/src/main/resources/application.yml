@@ -20,12 +20,6 @@ spring:
       max-file-size: 50MB
       max-request-size: 50MB
 
-sa-token:
-  token-name: boxkit-token  # 客户端请求头名
-  timeout: 2592000          # 30 天
-  is-read-cookie: false     # 纯 header 模式
-  is-log: false
-
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true

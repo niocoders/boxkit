@@ -1,4 +1,9 @@
 appId: com.boxkit.desktop
+# 市场协议：Web 门户点击「导入到 BoxKit」唤起客户端自动安装
+protocols:
+  - name: "BoxKit Market"
+    schemes:
+      - boxkit-market
 productName: BoxKit
 copyright: Copyright © 2026 BoxKit Authors
 

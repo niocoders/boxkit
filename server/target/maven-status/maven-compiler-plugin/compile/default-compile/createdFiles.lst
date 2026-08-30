@@ -3,15 +3,12 @@ com\boxkit\market\MarketApplication.class
 com\boxkit\market\mapper\PluginVersionMapper.class
 com\boxkit\market\mapper\UserMapper.class
 com\boxkit\market\service\MarketService.class
-com\boxkit\market\controller\AuthController.class
 com\boxkit\market\config\MybatisPlusConfig.class
-com\boxkit\market\controller\AuthController$RegisterReq.class
-com\boxkit\market\controller\DevController.class
+com\boxkit\market\controller\AdminController.class
 com\boxkit\market\common\GlobalExceptionHandler.class
 com\boxkit\market\entity\PluginVersion.class
 com\boxkit\market\entity\User.class
 com\boxkit\market\controller\MarketController.class
 com\boxkit\market\common\R.class
-com\boxkit\market\controller\AuthController$LoginReq.class
 com\boxkit\market\entity\Plugin.class
 com\boxkit\market\mapper\PluginMapper.class

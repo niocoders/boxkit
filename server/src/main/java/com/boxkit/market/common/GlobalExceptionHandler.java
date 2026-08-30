@@ -1,6 +1,5 @@
 package com.boxkit.market.common;
 
-import cn.dev33.satoken.exception.NotLoginException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -9,12 +8,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 /** 全局异常 → 统一 R 包装。 */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
-
-    @ExceptionHandler(NotLoginException.class)
-    @ResponseStatus(HttpStatus.OK)
-    public R<Void> onNotLogin(NotLoginException e) {
-        return R.error(401, "未登录或登录已过期");
-    }
 
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.OK)

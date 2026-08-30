@@ -2,7 +2,6 @@ import type {
   AppSettings,
   ConfigSetResult,
   InstallPreview,
-  LicenseState,
   MarketPlugin,
   PluginListItem,
   UpdateState,
@@ -27,9 +26,6 @@ export interface SettingsBridge {
       pluginId: string,
     ): Promise<{ preview: InstallPreview; conflict?: string } | { error: string } | null>;
   };
-  licenseState(): Promise<LicenseState>;
-  activate(key: string): Promise<{ ok: boolean; state?: LicenseState; error?: string }>;
-  deactivate(): Promise<LicenseState>;
   updaterState(): Promise<UpdateState>;
   checkUpdate(): Promise<UpdateState>;
   installUpdate(): void;

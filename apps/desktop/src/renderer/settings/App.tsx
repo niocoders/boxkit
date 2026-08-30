@@ -2,28 +2,19 @@ import { useEffect, useState } from "react";
 import type {
   AppSettings,
   InstallPreview,
-  LicenseState,
   MarketPlugin,
   PluginListItem,
   UpdateState,
 } from "@boxkit/shared";
 import { boxkit } from "./bridge.js";
 
-type Tab = "general" | "plugins" | "license" | "about";
+type Tab = "general" | "plugins" | "about";
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "general", label: "通用", icon: "⚙️" },
   { id: "plugins", label: "插件", icon: "🧩" },
-  { id: "license", label: "授权", icon: "🔑" },
   { id: "about", label: "关于", icon: "ℹ️" },
 ];
-
-const LICENSE_TEXT: Record<string, string> = {
-  trial: "试用中",
-  "trial-expired": "试用期已结束",
-  licensed: "已授权",
-  "license-expired": "授权已过期",
-};
 
 export function App() {
   const [tab, setTab] = useState<Tab>("general");
@@ -35,7 +26,7 @@ export function App() {
       if (p.tab === "plugins") {
         setTab("plugins");
         if (p.view === "market") setPluginView("market");
-      } else if (p.tab === "general" || p.tab === "license" || p.tab === "about") {
+      } else if (p.tab === "general" || p.tab === "about") {
         setTab(p.tab);
       }
     });
@@ -68,7 +59,6 @@ export function App() {
         {tab === "plugins" && (
           <PluginsView showToast={showToast} view={pluginView} onViewChange={setPluginView} />
         )}
-        {tab === "license" && <LicenseView showToast={showToast} />}
         {tab === "about" && <AboutView />}
       </div>
       {toast && <div className="toast">{toast}</div>}
@@ -518,93 +508,6 @@ function PluginsView({
           </div>
         </div>
       )}
-    </>
-  );
-}
-
-// ————— 授权 —————
-
-function LicenseView({ showToast }: { showToast: (m: string) => void }) {
-  const [state, setState] = useState<LicenseState | null>(null);
-  const [key, setKey] = useState("");
-
-  const reload = () => void boxkit.licenseState().then(setState);
-  useEffect(() => {
-    reload();
-  }, []);
-
-  if (!state) return <div className="loading">加载中…</div>;
-
-  const badge = LICENSE_TEXT[state.mode] ?? state.mode;
-  return (
-    <>
-      <h2>授权</h2>
-      <section className="card">
-        <div className="row">
-          <div>
-            <div className="row-title">
-              当前状态：<span className={`license ${state.mode}`}>{badge}</span>
-            </div>
-            <div className="row-desc">
-              {state.mode === "licensed" &&
-                `${state.plan ?? ""} · ${state.email ?? ""}${
-                  state.expiresAt ? ` · 有效期至 ${new Date(state.expiresAt).toLocaleDateString()}` : " · 永久"
-                }`}
-              {(state.mode === "trial" || state.mode === "trial-expired") &&
-                `试用期自 ${state.trialStartedAt ? new Date(state.trialStartedAt).toLocaleDateString() : "-"} 起`}
-            </div>
-          </div>
-          {state.daysLeft !== null && (
-            <div className="days">{state.mode === "licensed" ? `剩 ${state.daysLeft} 天` : `试用剩 ${state.daysLeft} 天`}</div>
-          )}
-        </div>
-        {state.mode !== "licensed" && (
-          <div className="activate">
-            <input
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder="粘贴授权码 BK1.…"
-              spellCheck={false}
-            />
-            <button
-              className="btn primary"
-              onClick={async () => {
-                if (!key.trim()) return;
-                const r = await boxkit.activate(key.trim());
-                if (r.ok) {
-                  showToast("激活成功");
-                  setKey("");
-                } else {
-                  showToast(r.error ?? "激活失败");
-                }
-                reload();
-              }}
-            >
-              激活
-            </button>
-          </div>
-        )}
-        {state.mode === "licensed" && (
-          <div className="row">
-            <div className="row-desc">如需转移到其他设备，请先在此取消授权。</div>
-            <button
-              className="btn small danger"
-              onClick={async () => {
-                await boxkit.deactivate();
-                showToast("已取消授权");
-                reload();
-              }}
-            >
-              取消授权
-            </button>
-          </div>
-        )}
-      </section>
-      <p className="hint-line">
-        授权码由 BoxKit 官方签发（Ed25519 离线签名验证）。测试授权可用
-        <code> pnpm license issue --plan pro --email you@example.com --days 365 </code>
-        生成。
-      </p>
     </>
   );
 }

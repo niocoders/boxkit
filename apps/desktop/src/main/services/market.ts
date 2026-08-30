@@ -63,16 +63,29 @@ export const marketService = {
       const res = await fetchWithTimeout(`${base}/api/market/plugins${q}`);
       if (!res.ok) return { error: `市场服务返回 ${res.status}` };
       const json = (await res.json()) as unknown;
-      const list = unwrap<MarketPlugin[]>(json);
+      // 兼容两种返回：裸数组 或 分页包装 {code,data:{records:[...]}}
+      const page = json as { data?: { records?: MarketPlugin[] } | MarketPlugin[] } | null;
+      const list = Array.isArray(json)
+        ? (json as MarketPlugin[])
+        : Array.isArray(page?.data)
+          ? (page!.data as unknown as MarketPlugin[])
+          : Array.isArray(page?.data?.records)
+            ? page!.data!.records!
+            : null;
       if (!Array.isArray(list)) return { error: "市场返回格式不正确" };
       const installed = installedMap();
-      return list.map((m) => {
+      return list.map((raw) => {
+        // 服务端字段为 filePath/latestVersion，规范成客户端 fileUrl/version
+        const m = raw as MarketPlugin & { filePath?: string };
         const local = installed.get(m.pluginId);
+        const version = m.version ?? m.latestVersion ?? "";
         return {
           ...m,
+          version,
+          fileUrl: m.fileUrl ?? m.filePath ?? "",
           installed: !!local,
           localVersion: local,
-          updatable: !!local && !!m.version && cmpVersion(m.version, local) > 0,
+          updatable: !!local && !!version && cmpVersion(version, local) > 0,
         };
       });
     } catch (e) {
@@ -88,10 +101,11 @@ export const marketService = {
       const list = await this.fetchMarket("");
       if ("error" in list) return list;
       const entry = list.find((m) => m.pluginId === pluginId);
-      if (!entry?.fileUrl) return { error: "市场里找不到该插件" };
-      const fileUrl = entry.fileUrl.startsWith("http")
+      if (!entry) return { error: "市场里找不到该插件" };
+      // 统一走按 ID 的下载路由（不依赖服务端存储布局）
+      const fileUrl = entry.fileUrl?.startsWith("http")
         ? entry.fileUrl
-        : `${marketBase().replace(/\/+$/, "")}/${entry.fileUrl.replace(/^\/+/, "")}`;
+        : `${marketBase().replace(/\/+$/, "")}/api/market/plugins/${encodeURIComponent(pluginId)}/download`;
       const res = await fetchWithTimeout(fileUrl);
       if (!res.ok) return { error: `下载失败（HTTP ${res.status}）` };
       const buf = Buffer.from(await res.arrayBuffer());

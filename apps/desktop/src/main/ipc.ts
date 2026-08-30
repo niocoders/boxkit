@@ -17,7 +17,6 @@ import { searchQuery, type EngineDeps } from "./providers/searchEngine.js";
 import { pluginManager } from "./plugins/manager.js";
 import { stageInstall, commitInstall } from "./plugins/staging.js";
 import type { PluginHost } from "./plugins/host.js";
-import * as licenseSvc from "./services/license.js";
 import { checkForUpdates, installUpdate, onUpdateEvent, updaterState, hostInfo } from "./services/updater.js";
 import { applyHotkey, unregisterAll } from "./services/hotkey.js";
 import { applyAutostart } from "./services/autostart.js";
@@ -234,18 +233,6 @@ export function registerIpc(deps: IpcDeps): void {
     }
   });
   ipcMain.on(IPC.pluginRemoveDevPath, (_e, dir: string) => pluginManager.removeDevPath(String(dir)));
-
-  // ————— 授权 —————
-  ipcMain.handle(IPC.licenseState, () => licenseSvc.licenseState());
-  ipcMain.handle(IPC.licenseActivate, (_e, key: string) => {
-    const r = licenseSvc.activateLicense(String(key ?? ""));
-    if (r.ok) toast("授权激活成功，感谢支持 🎉");
-    return r;
-  });
-  ipcMain.handle(IPC.licenseDeactivate, () => {
-    licenseSvc.deactivateLicense();
-    return licenseSvc.licenseState();
-  });
 
   // ————— 更新 —————
   ipcMain.handle(IPC.updaterState, () => updaterState());

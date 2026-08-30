@@ -57,11 +57,6 @@ const api = {
     install: (pluginId: string) => ipcRenderer.invoke(IPC.marketInstall, pluginId),
   },
 
-  // 授权
-  licenseState: () => ipcRenderer.invoke(IPC.licenseState),
-  activate: (key: string) => ipcRenderer.invoke(IPC.licenseActivate, key),
-  deactivate: () => ipcRenderer.invoke(IPC.licenseDeactivate),
-
   // 更新
   updaterState: () => ipcRenderer.invoke(IPC.updaterState),
   checkUpdate: () => ipcRenderer.invoke(IPC.updaterCheck),

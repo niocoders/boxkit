@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BoxKit 插件市场 — 管理端</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:#f4f5f7; color:#333; min-height:100vh; }
+header { background:#232428; color:#fff; padding:14px 24px; display:flex; align-items:center; gap:14px; }
+.mark { width:34px; height:34px; border-radius:8px; background:linear-gradient(135deg,#ff9f43,#2ecc71); display:flex; align-items:center; justify-content:center; font-weight:700; }
+h1 { font-size:17px; }
+.warn { margin-left:auto; font-size:12px; color:#ffb454; }
+main { max-width:900px; margin:24px auto; padding:0 24px; }
+.card { background:#fff; border:1px solid #ebedf0; border-radius:12px; padding:20px; margin-bottom:18px; }
+h2 { font-size:15px; margin-bottom:14px; }
+.up { border:2px dashed #cfd6e0; border-radius:10px; padding:26px; text-align:center; cursor:pointer; color:#666; }
+.up:hover { border-color:#4a90d9; color:#4a90d9; }
+.up input { display:none; }
+.row { display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid #f0f2f5; }
+.logo { width:44px; height:44px; border-radius:10px; object-fit:contain; background:#f5f6f8; }
+.grow { flex:1; min-width:0; }
+.name { font-weight:600; font-size:14px; }
+.meta { font-size:12px; color:#999; margin-top:2px; }
+button { border:none; border-radius:8px; padding:8px 16px; cursor:pointer; font-size:13px; }
+.danger { background:#fdecec; color:#c0392b; }
+.danger:hover { background:#f8d7d7; }
+.primary { background:#4a90d9; color:#fff; }
+.msg { margin-top:12px; font-size:13px; }
+.ok { color:#2e7d32; } .bad { color:#c0392b; }
+.empty { color:#999; text-align:center; padding:24px 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="mark">B</div>
+  <h1>BoxKit 插件市场 · 管理端</h1>
+  <span class="warn">无登录鉴权 — 请仅部署于内网 / 受信环境</span>
+  <a style="margin-left:auto;color:#9aa0ae;font-size:13px;text-decoration:none" href="/">用户端门户 →</a>
+</header>
+<main>
+  <div class="card">
+    <h2>发布 / 更新插件</h2>
+    <label class="up" id="drop">
+      <input type="file" id="file" accept=".bkx,.zip" onchange="publish(this.files[0])">
+      点击选择 .bkx 插件包（自动解析 plugin.json 与 logo）<br>
+      <span style="font-size:12px;color:#aaa">同名插件将升级版本并保留历史</span>
+    </label>
+    <div class="msg" id="pub-msg"></div>
+  </div>
+  <div class="card">
+    <h2>已上架插件</h2>
+    <div id="list"></div>
+  </div>
+</main>
+<script>
+async function load() {
+  const r = await fetch('/api/market/plugins?page=1&size=50');
+  const j = await r.json();
+  const list = (j.data && j.data.records) || [];
+  const el = document.getElementById('list');
+  el.innerHTML = list.length ? '' : '<div class="empty">暂无插件，先上传一个 .bkx</div>';
+  el.innerHTML += list.map(p => `
+    <div class="row">
+      ${p.logoUrl ? `<img class="logo" src="/storage/${esc(p.logoUrl)}">` : `<div class="logo" style="display:flex;align-items:center;justify-content:center;font-weight:700;color:#4a90d9">${esc((p.displayName||'?')[0])}</div>`}
+      <div class="grow">
+        <div class="name">${esc(p.displayName)} <span style="color:#999;font-weight:400">v${esc(p.latestVersion)} · ${esc(p.pluginId)}</span></div>
+        <div class="meta">${esc(p.description || '无描述')} · ${(p.downloads||0).toLocaleString()} 次安装</div>
+      </div>
+      <button class="danger" onclick="del('${esc(p.pluginId)}')">下架删除</button>
+    </div>`).join('');
+}
+async function publish(file) {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  const fd2 = new FormData(); fd2.append('file', file);
+  const r = await fetch('/api/admin/plugins', { method: 'POST', body: fd2 });
+  const j = await r.json();
+  const m = document.getElementById('pub-msg');
+  m.className = 'msg ' + (j.code === 0 ? 'ok' : 'bad');
+  m.textContent = j.code === 0 ? `发布成功：${j.data.displayName} v${j.data.latestVersion}` : ('发布失败：' + (j.msg || ''));
+  load();
+}
+async function del(id) {
+  if (!confirm('确认下架并删除 ' + id + '？（含历史版本与文件）')) return;
+  const r = await fetch('/api/admin/plugins/' + encodeURIComponent(id), { method: 'DELETE' });
+  const j = await r.json();
+  const m = document.getElementById('pub-msg');
+  m.className = 'msg ' + (j.code === 0 ? 'ok' : 'bad');
+  m.textContent = j.code === 0 ? '已下架 ' + id : ('删除失败：' + (j.msg || ''));
+  load();
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+load();
+</script>
+</body>
+</html>

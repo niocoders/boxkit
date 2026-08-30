@@ -73,7 +73,6 @@ export class PluginHost {
 
   constructor(
     private readonly manager: PluginManager,
-    private readonly canUsePlugins: () => boolean,
     private readonly toast: (msg: string) => void,
     private readonly preloadPath: string,
   ) {}
@@ -113,10 +112,6 @@ export class PluginHost {
   openPlugin(plugin: LoadedPlugin, enter: EnterPayload): void {
     if (!plugin.enabled) {
       this.toast(`插件「${plugin.manifest.displayName}」已被禁用`);
-      return;
-    }
-    if (!this.canUsePlugins()) {
-      this.toast("试用期已结束，请在设置中激活授权");
       return;
     }
     const win = getMainWindow();
