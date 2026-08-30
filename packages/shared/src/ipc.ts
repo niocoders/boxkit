@@ -66,7 +66,10 @@ export const IPC = {
   pkClipboardWrite: "pk:clipboard:write",
   pkClipboardWriteImage: "pk:clipboard:write-image", // utools.copyImage(pngBuffer)
   pkClipboardReadImage: "pk:clipboard:read-image", // utools.readClipboardImage()
-  pkScreenCapture: "pk:screen-capture", // utools.screenCapture（全屏兜底实现）
+  pkScreenCapture: "pk:screen-capture", // utools.screenCapture（区域裁剪）
+  pkScreenCaptureRegion: "pk:screen-capture-region", // 选区确认（overlay → main）
+  pkRedirect: "pk:redirect", // utools.redirect({cmd,payload})
+  pkUserToken: "pk:user-token", // utools.fetchUserServerToken
   pkNotify: "pk:notify",
   pkOpenExternal: "pk:open-external",
   pkResize: "pk:resize",

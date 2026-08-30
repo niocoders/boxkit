@@ -10,6 +10,7 @@ import {
   session,
   shell,
 } from "electron";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -21,6 +22,7 @@ import { logger } from "../core/logger.js";
 import type { LoadedPlugin } from "./manager.js";
 import type { PluginManager } from "./manager.js";
 import { getMainWindow } from "../windows/mainWindow.js";
+import { getMachineId } from "../services/machine-id.js";
 
 const HEADER_HEIGHT = 64;
 const PLUGIN_WIN = { width: 880, height: 640 };
@@ -66,6 +68,7 @@ export class PluginHost {
   private subinput: { placeholder: string } | null = null;
   private pendingEnter = new Map<string, EnterPayload>();
   private prePluginSize: { width: number; height: number } | null = null;
+  private pendingScreenShot: Buffer | null = null;
   private stateListeners = new Set<(s: PluginModeState) => void>();
 
   constructor(
@@ -423,154 +426,54 @@ export class PluginHost {
       return img.isEmpty() ? null : img.toPNG();
     });
 
-    // uTools 兼容：截屏（全屏兜底实现——返回主屏 PNG；区域选择 UI 暂未做）
+    // ————— uTools 兼容：screenCapture（区域裁剪） —————
+    // 流程：抓主屏全图 → 隐藏主窗 → 全屏遮罩拖拽选区 → 按选区裁剪 → PNG 回调；Esc 取消
     ipcMain.handle(IPC.pkScreenCapture, async (e) => {
       this.requirePermission(this.senderPlugin(e), "screen");
+      const dataUrl = await this.grabPrimaryScreen();
+      const main = getMainWindow();
+      const wasVisible = main?.isVisible() ?? false;
+      main?.hide();
       const primary = screen.getPrimaryDisplay();
-      const { desktopCapturer } = await import("electron");
-      const sources = await desktopCapturer.getSources({
-        types: ["screen"],
-        thumbnailSize: { width: primary.size.width, height: primary.size.height },
+      const overlay = new BrowserWindow({
+        x: primary.bounds.x,
+        y: primary.bounds.y,
+        width: primary.size.width,
+        height: primary.size.height,
+        frame: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        show: false,
+        webPreferences: { nodeIntegration: true, contextIsolation: false },
       });
-      const src = sources.find((s) => s.display_id === String(primary.id)) ?? sources[0];
-      if (!src) throw new Error("找不到可截取的屏幕");
-      return src.thumbnail.toPNG();
-    });
-
-    ipcMain.on(IPC.pkNotify, (e, body: string) => {
-      const p = this.requirePermission(this.senderPlugin(e), "notify");
-      const text = String(body).slice(0, 200);
-      try {
-        // uTools 语义是系统通知；Electron Notification 不可用时回退面板气泡
-        if (Notification.isSupported()) {
-          const n = new Notification({
-            title: p.manifest.displayName,
-            body: text,
-            silent: true,
-          });
-          n.on("click", () => {
-            const w = getMainWindow();
-            w?.show();
-            w?.focus();
-          });
-          n.show();
-        } else {
-          this.toast(`[${p.manifest.displayName}] ${text}`);
+      let settled = false;
+      const done = (b: Buffer) => {
+        if (!settled) {
+          settled = true;
+          overlay.destroy();
+          if (wasVisible) main?.show();
         }
-      } catch {
-        this.toast(`[${p.manifest.displayName}] ${text}`);
-      }
-    });
-
-    ipcMain.handle(IPC.pkOpenExternal, (e, url: string) => {
-      this.requirePermission(this.senderPlugin(e), "shell");
-      const u = String(url);
-      if (!/^https?:\/\//i.test(u)) throw new Error("仅允许 http/https 链接");
-      void shell.openExternal(u);
-    });
-
-    ipcMain.on(IPC.pkResize, (_e, ratio: number) => {
-      this.setViewHeightRatio(Number(ratio));
-    });
-
-    ipcMain.handle(IPC.pkDisplaySize, (e) => {
-      this.requirePermission(this.senderPlugin(e), "screen");
-      return screen.getPrimaryDisplay().workAreaSize;
-    });
-
-    // ————— uTools 兼容层（window.utools） —————
-
-    ipcMain.on(IPC.pkHideMain, () => getMainWindow()?.hide());
-    ipcMain.on(IPC.pkShowMain, () => {
-      const w = getMainWindow();
-      w?.show();
-      w?.focus();
-    });
-
-    ipcMain.handle(IPC.pkOpenPath, (e, p: string) => {
-      this.requirePermission(this.senderPlugin(e), "shell");
-      return shell.openPath(String(p));
-    });
-
-    ipcMain.on(IPC.pkDisplayFull, (e, which: "primary" | "all") => {
-      this.requirePermission(this.senderPlugin(e), "screen");
-      // Electron Display 对象可直接序列化
-      e.returnValue =
-        which === "all"
-          ? screen.getAllDisplays()
-          : screen.getPrimaryDisplay();
-    });
-
-    // pouchdb 风格文档存储（同步 IPC）：kv 值为 { rev, data }
-    interface StoredDoc { rev: number; data: unknown }
-
-    ipcMain.on(IPC.pkDbDocGet, (e, key: string) => {
-      const p = this.senderPlugin(e);
-      if (!p) { e.returnValue = null; return; }
-      const kv = this.manager.db(p.manifest.name);
-      const stored = kv.get(key) as StoredDoc | null;
-      e.returnValue = stored
-        ? { _id: key.slice(5), _rev: String(stored.rev), data: stored.data }
-        : null;
-    });
-
-    ipcMain.on(IPC.pkDbDocPut, (e, key: string, doc: { _id?: string; _rev?: string; data?: unknown }) => {
-      const p = this.senderPlugin(e);
-      if (!p || !key.startsWith("_doc:")) { e.returnValue = { ok: false, error: "无效的文档" }; return; }
-      const kv = this.manager.db(p.manifest.name);
-      const id = key.slice(5);
-      if (!id) { e.returnValue = { ok: false, error: "缺少 _id" }; return; }
-      const stored = kv.get(key) as StoredDoc | null;
-      if (stored && doc?._rev !== undefined && String(stored.rev) !== String(doc._rev)) {
-        e.returnValue = { ok: false, error: "conflict" };
-        return;
-      }
-      const nextRev = (stored?.rev ?? 0) + 1;
-      kv.put(key, { rev: nextRev, data: doc?.data ?? {} });
-      e.returnValue = { ok: true, id, rev: String(nextRev) };
-    });
-
-    ipcMain.on(IPC.pkDbDocRemove, (e, key: string, doc: { _id?: string; _rev?: string }) => {
-      const p = this.senderPlugin(e);
-      if (!p || !key.startsWith("_doc:")) { e.returnValue = { ok: false, error: "无效的文档" }; return; }
-      const kv = this.manager.db(p.manifest.name);
-      const stored = kv.get(key) as StoredDoc | null;
-      if (!stored) { e.returnValue = { ok: true }; return; }
-      if (doc?._rev !== undefined && String(stored.rev) !== String(doc._rev)) {
-        e.returnValue = { ok: false, error: "conflict" };
-        return;
-      }
-      kv.remove(key);
-      e.returnValue = { ok: true };
-    });
-
-    ipcMain.on(IPC.pkDbDocAll, (e) => {
-      const p = this.senderPlugin(e);
-      if (!p) { e.returnValue = []; return; }
-      const all = this.manager.db(p.manifest.name).all();
-      const docs = all
-        .filter((item) => item.key.startsWith("_doc:"))
-        .map((item) => {
-          const stored = item.value as StoredDoc;
-          return { _id: item.key.slice(5), _rev: String(stored?.rev ?? 0), data: stored?.data };
+        return Buffer.alloc(0);
+      };
+      const resultP = new Promise<Buffer>((resolve) => {
+        ipcMain.once("pk:screen-capture-result", (_ev, buf: Buffer) => {
+          settled = true;
+          resolve(Buffer.from(buf));
+          overlay.destroy();
+          if (wasVisible) main?.show();
         });
-      e.returnValue = docs;
-    });
-
-    ipcMain.on(IPC.pkDialogOpenSync, (e, args: { kind: "open"; options: Electron.OpenDialogOptions }) => {
-      const p = this.senderPlugin(e);
-      if (!p) { e.returnValue = { canceled: true, filePaths: [] }; return; }
-      const win = getMainWindow() ?? undefined;
-      const r = dialog.showOpenDialogSync(win as BrowserWindow, args.options ?? {});
-      e.returnValue = { canceled: !r, filePaths: r ?? [] };
-    });
-
-    ipcMain.on(IPC.pkDialogSaveSync, (e, args: { kind: "save"; options: Electron.SaveDialogOptions }) => {
-      const p = this.senderPlugin(e);
-      if (!p) { e.returnValue = { canceled: true, filePath: undefined }; return; }
-      const win = getMainWindow() ?? undefined;
-      const r = dialog.showSaveDialogSync(win as BrowserWindow, args.options ?? {});
-      e.returnValue = { canceled: !r, filePath: r };
+        overlay.on("closed", () => {
+          if (!settled) {
+            settled = true;
+            resolve(this.pendingScreenShot ?? Buffer.alloc(0));
+            if (wasVisible) main?.show();
+          }
+        });
+      });
+      await overlay.loadURL(this.screenCaptureOverlayHtml(dataUrl));
+      overlay.show();
+      const png = await resultP;
+      return png;
     });
 
     // ————— uTools 兼容：simulateKeyboardTap —————
@@ -640,5 +543,110 @@ export class PluginHost {
       const w = childWindows.get(Number(id));
       w?.webContents.send(String(channel), data);
     });
+
+    // ————— uTools 兼容：redirect（跳转到其他插件/关键字） —————
+    ipcMain.handle(IPC.pkRedirect, (_e, input: { cmd?: string; payload?: string }) => {
+      const cmd = String(input?.cmd ?? "").trim();
+      const payload = String(input?.payload ?? "");
+      if (!cmd) throw new Error("redirect 缺少 cmd");
+      const feat = this.manager
+        .enabledPlugins()
+        .flatMap((p) => p.manifest.features.map((f) => ({ p, f })))
+        .find(({ f }) =>
+          f.cmds.some((c) => (typeof c === "string" ? c : (c.explain ?? f.explain)) === cmd),
+        );
+      if (!feat) {
+        this.toast(`未找到功能：${cmd}`);
+        return { ok: false };
+      }
+      this.openPlugin(feat.p, { code: feat.f.code, type: "over", payload: payload || cmd });
+      return { ok: true };
+    });
+
+    // ————— uTools 兼容：fetchUserServerToken（BoxKit 本地用户令牌） —————
+    // uTools 返回其账号体系令牌；BoxKit 无账号体系，签发基于设备指纹的本地稳定令牌。
+    ipcMain.handle(IPC.pkUserToken, (e) => {
+      const p = this.requirePermission(this.senderPlugin(e), "shell");
+      const mid = getMachineId();
+      const token = crypto
+        .createHmac("sha256", "boxkit-user-token")
+        .update(`${mid}:${p.manifest.name}`)
+        .digest("hex");
+      return { token, userId: mid, pluginId: p.manifest.name };
+    });
+
+    // ————— uTools 兼容：screenCapture 区域裁剪（overlay 选区回传） —————
+    ipcMain.on(IPC.pkScreenCaptureRegion, (e, rect: { x: number; y: number; width: number; height: number }) => {
+      e.returnValue = this.resolveScreenCaptureRegion(rect);
+    });
+  }
+
+  /** 用 overlay 选区裁剪已抓取的全屏图（物理像素按 DPR 换算） */
+  private resolveScreenCaptureRegion(rect: { x: number; y: number; width: number; height: number }): Buffer {
+    if (!this.pendingScreenShot) throw new Error("没有待裁剪的屏幕图像");
+    const img = nativeImage.createFromBuffer(this.pendingScreenShot);
+    const dpr = img.getSize().width / (screen.getPrimaryDisplay().size.width || 1);
+    const crop = img.crop({
+      x: Math.max(0, Math.round(rect.x * dpr)),
+      y: Math.max(0, Math.round(rect.y * dpr)),
+      width: Math.max(1, Math.round(rect.width * dpr)),
+      height: Math.max(1, Math.round(rect.height * dpr)),
+    });
+    this.pendingScreenShot = null;
+    return crop.toPNG();
+  }
+
+  /** 抓取主屏全图（screenCapture 第一步），返回 data URL 供 overlay 背景 */
+  private async grabPrimaryScreen(): Promise<string> {
+    const primary = screen.getPrimaryDisplay();
+    const { desktopCapturer } = await import("electron");
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: { width: primary.size.width, height: primary.size.height },
+    });
+    const src = sources.find((s) => s.display_id === String(primary.id)) ?? sources[0];
+    if (!src) throw new Error("找不到可截取的屏幕");
+    this.pendingScreenShot = src.thumbnail.toPNG();
+    return `data:image/png;base64,${this.pendingScreenShot.toString("base64")}`;
+  }
+
+  /** 选区遮罩页（内联，无构建依赖；nodeIntegration 打开以便回传选区） */
+  private screenCaptureOverlayHtml(dataUrl: string): string {
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      html,body{margin:0;overflow:hidden;cursor:crosshair;user-select:none}
+      #bg{position:fixed;inset:0;width:100vw;height:100vh}
+      #box{position:fixed;border:2px solid #4a90d9;background:rgba(74,144,217,0.15);display:none}
+      #tip{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.65);color:#fff;padding:6px 14px;border-radius:6px;font:13px/1 sans-serif}
+    </style></head><body>
+    <img id="bg" src="${dataUrl}">
+    <div id="box"></div><div id="tip">拖拽选择区域，松开确认，Esc 取消</div>
+    <script>
+      const { ipcRenderer } = require("electron");
+      let sx = 0, sy = 0, dragging = false;
+      const box = document.getElementById("box");
+      document.addEventListener("mousedown", (e) => {
+        dragging = true; sx = e.clientX; sy = e.clientY;
+        box.style.display = "block"; box.style.left = sx + "px"; box.style.top = sy + "px";
+        box.style.width = "0"; box.style.height = "0";
+      });
+      document.addEventListener("mousemove", (e) => {
+        if (!dragging) return;
+        box.style.left = Math.min(sx, e.clientX) + "px";
+        box.style.top = Math.min(sy, e.clientY) + "px";
+        box.style.width = Math.abs(e.clientX - sx) + "px";
+        box.style.height = Math.abs(e.clientY - sy) + "px";
+      });
+      document.addEventListener("mouseup", (e) => {
+        if (!dragging) return;
+        dragging = false;
+        const w = Math.abs(e.clientX - sx), h = Math.abs(e.clientY - sy);
+        if (w < 4 || h < 4) { window.close(); return; }
+        const rect = { x: Math.min(sx, e.clientX), y: Math.min(sy, e.clientY), width: w, height: h };
+        const cropped = ipcRenderer.sendSync("pk:screen-capture-region", rect);
+        ipcRenderer.send("pk:screen-capture-result", cropped);
+        window.close();
+      });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") window.close(); });
+    </script></body></html>`;
   }
 }

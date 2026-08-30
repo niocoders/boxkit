@@ -167,7 +167,10 @@ const utools = {
   screenCapture(cb: (png: Buffer) => void): void {
     void ipcRenderer
       .invoke(IPC.pkScreenCapture)
-      .then((png: Buffer) => cb(Buffer.from(png)))
+      .then((png: Buffer) => {
+        const b = Buffer.from(png);
+        if (b.length) cb(b); // 空缓冲 = 用户取消
+      })
       .catch((err: unknown) => console.error("[boxkit] screenCapture 失败:", err));
   },
 
@@ -208,11 +211,13 @@ const utools = {
     // 兼容占位：设备标识由宿主统一管理，插件层不暴露
     return "boxkit";
   },
-  fetchUserServerToken(): never {
-    throw new Error("utools.fetchUserServerToken 暂未支持（需 uTools 账号体系）");
+  /** BoxKit 本地用户令牌（设备指纹 HMAC；uTools 版返回其账号体系令牌） */
+  fetchUserServerToken(): Promise<{ token: string; userId: string; pluginId: string }> {
+    return ipcRenderer.invoke(IPC.pkUserToken);
   },
-  redirect(): never {
-    throw new Error("utools.redirect 暂未支持（请使用 feature cmds 进入插件）");
+  /** 重定向到其他插件功能：utools.redirect({ cmd: "关键字", payload? }) */
+  redirect(redirectInput: { cmd: string; payload?: string }): Promise<{ ok: boolean }> {
+    return ipcRenderer.invoke(IPC.pkRedirect, redirectInput);
   },
   /** 模拟按键（作用于当前焦点窗口）：utools.simulateKeyboardTap('a', 'ctrl') */
   simulateKeyboardTap(key: string, ...modifiers: string[]): void {
