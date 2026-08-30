@@ -430,7 +430,8 @@ export class PluginHost {
     // 流程：抓主屏全图 → 隐藏主窗 → 全屏遮罩拖拽选区 → 按选区裁剪 → PNG 回调；Esc 取消
     ipcMain.handle(IPC.pkScreenCapture, async (e) => {
       this.requirePermission(this.senderPlugin(e), "screen");
-      const dataUrl = await this.grabPrimaryScreen();
+      this.pendingScreenShot = await this.grabScreenBuffer();
+      const dataUrl = `data:image/png;base64,${this.pendingScreenShot.toString("base64")}`;
       const main = getMainWindow();
       const wasVisible = main?.isVisible() ?? false;
       main?.hide();
@@ -596,8 +597,8 @@ export class PluginHost {
     return crop.toPNG();
   }
 
-  /** 抓取主屏全图（screenCapture 第一步），返回 data URL 供 overlay 背景 */
-  private async grabPrimaryScreen(): Promise<string> {
+  /** 抓取主屏全图（screenCapture/自检共用），返回 PNG Buffer */
+  async grabScreenBuffer(): Promise<Buffer> {
     const primary = screen.getPrimaryDisplay();
     const { desktopCapturer } = await import("electron");
     const sources = await desktopCapturer.getSources({
@@ -606,8 +607,18 @@ export class PluginHost {
     });
     const src = sources.find((s) => s.display_id === String(primary.id)) ?? sources[0];
     if (!src) throw new Error("找不到可截取的屏幕");
-    this.pendingScreenShot = src.thumbnail.toPNG();
-    return `data:image/png;base64,${this.pendingScreenShot.toString("base64")}`;
+    return src.thumbnail.toPNG();
+  }
+
+  /** 调试/无头自检入口 */
+  async debugGrabScreen(): Promise<Buffer> {
+    return this.grabScreenBuffer();
+  }
+
+  /** 调试/无头自检入口：按逻辑坐标裁剪指定缓冲 */
+  debugCropRect(rect: { x: number; y: number; width: number; height: number }, buf?: Buffer): Buffer {
+    this.pendingScreenShot = buf ?? this.pendingScreenShot;
+    return this.resolveScreenCaptureRegion(rect);
   }
 
   /** 选区遮罩页（内联，无构建依赖；nodeIntegration 打开以便回传选区） */

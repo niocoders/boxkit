@@ -153,6 +153,25 @@ function onReady(): void {
     smokeCheck();
     return;
   }
+  // BOXKIT_SHOT_TEST=<png路径|->：无头验证 screenCapture 内部链路（抓屏+DPR 裁剪）
+  if (process.env.BOXKIT_SHOT_TEST) {
+    setTimeout(async () => {
+      try {
+        const full = await pluginHost.debugGrabScreen();
+        const img = (await import("electron")).nativeImage.createFromBuffer(full);
+        const cropped = pluginHost.debugCropRect({ x: 100, y: 50, width: 200, height: 100 }, full);
+        const cimg = (await import("electron")).nativeImage.createFromBuffer(cropped);
+        console.log("SHOT_TEST_OK full=" + img.getSize().width + "x" + img.getSize().height + " crop=" + cimg.getSize().width + "x" + cimg.getSize().height);
+        const out = process.env.BOXKIT_SHOT_TEST;
+        if (out && out !== "-") fs.writeFileSync(out, cropped);
+        app.exit(0);
+      } catch (err) {
+        console.log("SHOT_TEST_FAIL", String(err));
+        app.exit(1);
+      }
+    }, 2500);
+    return;
+  }
   showMainWindow();
   // BOXKIT_PANEL_SHOT=<png路径>：展示面板数秒后离屏截图并退出（UI 对照/CI 用）
   if (process.env.BOXKIT_PANEL_SHOT) {
