@@ -118,7 +118,7 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
     const official = ["utools-demo", "devtoolbox", "clipboard-history"];
     for (const f of deps.features) {
       const gid = `plugin:${f.pluginId}:${f.feature.code}`;
-      if (official.includes(f.pluginId) && !recentIds.includes(gid) && !byId.has(gid)) {
+      if (official.includes(f.pluginId) && !recentIds.includes(gid)) {
         collect({
           id: `plugin:${f.pluginId}:${f.feature.code}`,
           title: f.feature.explain,
