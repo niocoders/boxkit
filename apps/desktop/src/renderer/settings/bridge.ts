@@ -34,6 +34,7 @@ export interface SettingsBridge {
   checkUpdate(): Promise<UpdateState>;
   installUpdate(): void;
   onUpdateEvent(cb: (s: UpdateState) => void): () => void;
+  onSettingsShowTab(cb: (p: { tab: string; view?: string }) => void): () => void;
   appInfo(): Promise<{
     version: string;
     electron: string;

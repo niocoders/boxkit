@@ -33,6 +33,8 @@ export const IPC = {
   licenseActivate: "license:activate",
   licenseDeactivate: "license:deactivate",
 
+  settingsShowTab: "settings:show-tab", // main → settings renderer：打开并切换 tab/视图
+
   // —— 插件市场（settings renderer ↔ main）——
   marketFetch: "market:fetch", // invoke：拉取市场列表（keyword 参数）
   marketInstall: "market:install", // invoke：下载市场插件并进入暂存，返回 InstallPreview

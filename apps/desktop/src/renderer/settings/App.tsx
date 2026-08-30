@@ -27,7 +27,19 @@ const LICENSE_TEXT: Record<string, string> = {
 
 export function App() {
   const [tab, setTab] = useState<Tab>("general");
+  const [pluginView, setPluginView] = useState<"installed" | "market">("installed");
   const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    return boxkit.onSettingsShowTab((p) => {
+      if (p.tab === "plugins") {
+        setTab("plugins");
+        if (p.view === "market") setPluginView("market");
+      } else if (p.tab === "general" || p.tab === "license" || p.tab === "about") {
+        setTab(p.tab);
+      }
+    });
+  }, []);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -53,7 +65,9 @@ export function App() {
       </div>
       <div className="content">
         {tab === "general" && <GeneralView showToast={showToast} />}
-        {tab === "plugins" && <PluginsView showToast={showToast} />}
+        {tab === "plugins" && (
+          <PluginsView showToast={showToast} view={pluginView} onViewChange={setPluginView} />
+        )}
         {tab === "license" && <LicenseView showToast={showToast} />}
         {tab === "about" && <AboutView />}
       </div>
@@ -325,10 +339,17 @@ function MarketView({
 
 // ————— 插件 —————
 
-function PluginsView({ showToast }: { showToast: (m: string) => void }) {
+function PluginsView({
+  showToast,
+  view,
+  onViewChange,
+}: {
+  showToast: (m: string) => void;
+  view: "installed" | "market";
+  onViewChange: (v: "installed" | "market") => void;
+}) {
   const [items, setItems] = useState<PluginListItem[] | null>(null);
   const [pending, setPending] = useState<{ preview: InstallPreview; conflict: string } | null>(null);
-  const [view, setView] = useState<"installed" | "market">("installed");
 
   const reload = () => void boxkit.plugins.list().then(setItems);
 
@@ -352,10 +373,10 @@ function PluginsView({ showToast }: { showToast: (m: string) => void }) {
     <>
       <h2>插件</h2>
       <div className="segment">
-        <button className={`seg ${view === "installed" ? "on" : ""}`} onClick={() => setView("installed")}>
+        <button className={`seg ${view === "installed" ? "on" : ""}`} onClick={() => onViewChange("installed")}>
           已安装 ({items.length})
         </button>
-        <button className={`seg ${view === "market" ? "on" : ""}`} onClick={() => setView("market")}>
+        <button className={`seg ${view === "market" ? "on" : ""}`} onClick={() => onViewChange("market")}>
           插件市场
         </button>
       </div>

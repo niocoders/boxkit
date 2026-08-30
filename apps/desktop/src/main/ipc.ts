@@ -88,6 +88,11 @@ export function registerIpc(deps: IpcDeps): void {
             openSettingsWindow();
             return { ok: true };
           }
+          if (id === "open:market") {
+            openSettingsWindow();
+            sendToSettings(IPC.settingsShowTab, { tab: "plugins", view: "market" });
+            return { ok: true };
+          }
           if (id === "quit") {
             deps.onQuitRequest();
             return { ok: true };

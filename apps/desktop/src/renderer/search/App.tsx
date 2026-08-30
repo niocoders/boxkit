@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PluginModeState, SearchResult } from "@boxkit/shared";
 import { boxkit } from "./bridge.js";
 
@@ -10,14 +10,30 @@ interface Expanded {
   cmds: string[];
 }
 
-function ResultIcon({ r }: { r: SearchResult }) {
+interface GridGroup {
+  key: "recent" | "plugin" | "market";
+  title: string;
+  action?: string;
+  items: SearchResult[];
+}
+
+function ResultIcon({ r, size = 34 }: { r: SearchResult; size?: number }) {
+  const style = { width: size, height: size };
   if (r.icon) {
-    return <img className="r-icon" src={r.icon} alt="" draggable={false} />;
+    return <img className="r-icon" style={style} src={r.icon} alt="" draggable={false} />;
   }
   if (r.builtinIcon) {
-    return <span className="r-icon r-emoji">{r.builtinIcon}</span>;
+    return (
+      <span className="r-icon r-emoji" style={style}>
+        {r.builtinIcon}
+      </span>
+    );
   }
-  return <span className="r-icon r-avatar">{(r.title?.[0] ?? "?").toUpperCase()}</span>;
+  return (
+    <span className="r-icon r-avatar" style={style}>
+      {(r.title?.[0] ?? "?").toUpperCase()}
+    </span>
+  );
 }
 
 /** 关键字命中高亮（uTools 蓝色高亮风格） */
@@ -42,6 +58,8 @@ const KIND_BADGE: Record<string, { label: string; dim?: boolean }> = {
   web: { label: "网络", dim: true },
 };
 
+const GRID_COLUMNS = 9;
+
 export function App() {
   const [mode, setMode] = useState<Mode>("search");
   const [pluginState, setPluginState] = useState<PluginModeState>({ mode: "search" });
@@ -49,6 +67,7 @@ export function App() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [selected, setSelected] = useState(0);
   const [expanded, setExpanded] = useState<Expanded | null>(null);
+  const [recentExpanded, setRecentExpanded] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -121,13 +140,47 @@ export function App() {
     });
   }, []);
 
+  const isGrid = mode === "search" && !query && !expanded && results.length > 0;
+
+  // 空态网格分组（uTools 6：最近使用 / 插件功能 / 市场精选）
+  const gridGroups = useMemo<GridGroup[]>(() => {
+    if (!isGrid) return [];
+    const by = (s: string) => results.filter((r) => (r.section ?? "plugin") === s);
+    const recentAll = by("recent");
+    const groups: GridGroup[] = [];
+    groups.push({
+      key: "recent",
+      title: "最近使用",
+      action: recentAll.length > GRID_COLUMNS ? (recentExpanded ? "收起" : `展开 (${recentAll.length})`) : undefined,
+      items: recentExpanded ? recentAll : recentAll.slice(0, GRID_COLUMNS),
+    });
+    groups.push({ key: "plugin", title: "全部功能", action: "全部 >", items: by("plugin") });
+    groups.push({ key: "market", title: "市场精选", items: by("market") });
+    return groups.filter((g) => g.items.length > 0);
+  }, [isGrid, results, recentExpanded]);
+
+  // 网格扁平导航序
+  const flatGrid = useMemo(() => gridGroups.flatMap((g) => g.items), [gridGroups]);
+
+  const executeGridItem = useCallback(
+    (r: SearchResult) => {
+      if (r.id === "open:market") {
+        void boxkit.execute(r);
+        setTimeout(() => boxkit.hide(), 150);
+        return;
+      }
+      void boxkit.execute(r);
+      if (r.kind !== "plugin") setTimeout(() => boxkit.hide(), 150);
+    },
+    [],
+  );
+
   const executeAt = useCallback(
     (idx: number) => {
       const r = results[idx];
       if (!r) return;
       void boxkit.execute(r);
       if (mode === "search" && r.kind !== "plugin") {
-        // 启动应用/命令后收起面板
         setTimeout(() => boxkit.hide(), 150);
       }
     },
@@ -137,6 +190,11 @@ export function App() {
   const listCount = expanded ? expanded.cmds.length : results.length;
 
   const executeCurrent = useCallback(() => {
+    if (isGrid) {
+      const r = flatGrid[selected];
+      if (r) executeGridItem(r);
+      return;
+    }
     if (expanded) {
       const cmd = expanded.cmds[selected];
       if (cmd === undefined) return;
@@ -145,7 +203,7 @@ export function App() {
       return;
     }
     executeAt(selected);
-  }, [expanded, selected, executeAt]);
+  }, [isGrid, flatGrid, selected, executeGridItem, expanded, executeAt]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -160,6 +218,30 @@ export function App() {
       return;
     }
     if (mode === "plugin") return; // 输入转发给插件，不拦截
+    if (isGrid) {
+      const n = flatGrid.length;
+      if (!n) return;
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setSelected((i) => Math.min(n - 1, i + 1));
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setSelected((i) => Math.max(0, i - 1));
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelected((i) => Math.min(n - 1, i + GRID_COLUMNS));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelected((i) => Math.max(0, i - GRID_COLUMNS));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        executeCurrent();
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        setRecentExpanded((v) => !v);
+      }
+      return;
+    }
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setSelected((i) => Math.min(listCount - 1, i + 1));
@@ -189,12 +271,12 @@ export function App() {
   };
 
   useEffect(() => {
-    const el = listRef.current?.querySelector(".r-item.active");
+    const el = listRef.current?.querySelector(".r-item.active, .g-item.active");
     el?.scrollIntoView({ block: "nearest" });
-  }, [selected, expanded]);
+  }, [selected, expanded, isGrid]);
 
   const p = pluginState.plugin;
-  const showList = mode === "search" && (expanded ? expanded.cmds.length > 0 : results.length > 0);
+  const showList = mode === "search" && !isGrid && (expanded ? expanded.cmds.length > 0 : results.length > 0);
   return (
     <div className="shell">
       <div className="header">
@@ -206,7 +288,7 @@ export function App() {
         {mode === "plugin" && p?.logo ? (
           <img className="p-logo" src={p.logo} alt="" draggable={false} />
         ) : (
-          <span className="app-mark">B</span>
+          <span className="header-spacer" />
         )}
         <input
           ref={inputRef}
@@ -215,7 +297,7 @@ export function App() {
           placeholder={
             mode === "plugin"
               ? pluginState.subinput?.placeholder ?? `${p?.displayName ?? "插件"}已启动（未接管搜索框）`
-              : "搜索应用、命令、插件，或输入关键字…"
+              : "搜索应用、命令、插件，或粘贴文件、图片…"
           }
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
@@ -223,11 +305,54 @@ export function App() {
           autoFocus
         />
         {mode === "plugin" && <span className="p-name">{p?.displayName}</span>}
+        {mode === "search" && <span className="app-mark">B</span>}
       </div>
+
+      {isGrid && (
+        <div className="grid-scroll" ref={listRef}>
+          {gridGroups.map((g) => (
+            <div className="grid-group" key={g.key}>
+              <div className="group-head">
+                <span className="group-title">{g.title}</span>
+                {g.action && (
+                  <span
+                    className="group-action"
+                    onClick={() => {
+                      if (g.key === "recent") setRecentExpanded((v) => !v);
+                    }}
+                  >
+                    {g.action}
+                  </span>
+                )}
+              </div>
+              <div className="icon-grid">
+                {g.items.map((r) => {
+                  const idx = flatGrid.indexOf(r);
+                  return (
+                    <div
+                      key={g.key + r.id}
+                      className={`g-item ${idx === selected ? "active" : ""}`}
+                      onMouseEnter={() => setSelected(idx)}
+                      onClick={() => executeGridItem(r)}
+                      title={r.subtitle}
+                    >
+                      <ResultIcon r={r} size={48} />
+                      <span className="g-label">{r.title}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {showList && (
         <div className="results" ref={listRef}>
           {expanded && <div className="section-label">「{expanded.base.title}」的关键字</div>}
+          {mode === "search" && !expanded && query && (
+            <div className="section-label">最佳匹配</div>
+          )}
           {(expanded ? expanded.cmds : results).map((item, i) => {
             if (expanded) {
               const cmd = item as string;
@@ -291,25 +416,22 @@ export function App() {
         </div>
       )}
 
-      {mode === "search" && !showList && (
+      {mode === "search" && !isGrid && !showList && (
         <div className="empty">{query ? "没有匹配结果" : "输入以搜索；插件市场在设置中"}</div>
       )}
 
       {mode === "plugin" && <div className="plugin-hint">Esc 返回搜索面板 · 内容区域由插件提供</div>}
 
       <div className="footer">
-        <span>↑↓ 选择</span>
+        <span>↑↓←→ 选择</span>
         <span>↵ 打开</span>
-        {mode === "search" && !expanded && <span>→ 副命令</span>}
+        {mode === "search" && !expanded && !isGrid && <span>→ 副命令</span>}
         {mode === "search" && expanded && <span>← 返回</span>}
+        {isGrid && <span>Tab 展开/收起</span>}
         <span>{mode === "plugin" ? "Esc 返回" : "Esc 隐藏"}</span>
         <span className="spacer" />
         {mode === "search" && (
-          <span
-            className="f-entry"
-            title="插件市场与设置"
-            onClick={() => boxkit.openSettings()}
-          >
+          <span className="f-entry" title="插件市场与设置" onClick={() => boxkit.openSettings()}>
             ⚙ 设置 / 市场
           </span>
         )}

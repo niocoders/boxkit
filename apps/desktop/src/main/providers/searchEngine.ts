@@ -29,9 +29,6 @@ export interface EngineDeps {
   usage?: Record<string, { count: number; last: number }>;
 }
 
-/** 空输入时「最近使用」最多条数 */
-export const RECENT_LIMIT = 8;
-
 const regexCache = new Map<string, RegExp | null>();
 
 function compiledRegex(pattern: string): RegExp | null {
@@ -75,18 +72,22 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
   const results: SearchResult[] = [];
 
   if (!q) {
-    // 空输入：uTools 式「最近使用」优先，其次插件功能目录 + 系统命令
+    // 空输入：uTools 6 式分组网格 —— 最近使用 / 插件功能 / 市场精选
+    const collect = (r: SearchResult) => {
+      results.push(r);
+    };
+    // 1) 最近使用（按 last 降序，最多 18）
     const recentIds = Object.entries(usage)
       .filter(([, u]) => u.count > 0)
       .sort((a, b) => b[1].last - a[1].last || b[1].count - a[1].count)
-      .slice(0, RECENT_LIMIT)
+      .slice(0, 18)
       .map(([id]) => id);
     const byId = new Map<string, SearchResult>();
-    const collect = (r: SearchResult) => {
+    const pushGroup = (r: SearchResult) => {
       if (!byId.has(r.id)) byId.set(r.id, r);
     };
     for (const f of deps.features) {
-      collect({
+      pushGroup({
         id: `plugin:${f.pluginId}:${f.feature.code}`,
         title: f.feature.explain,
         subtitle: f.displayName,
@@ -95,27 +96,52 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
         score: 30,
         pluginId: f.pluginId,
         featureCode: f.feature.code,
+        section: "plugin",
         pluginCmds: f.feature.cmds.map((c) => (typeof c === "string" ? c : c.explain ?? f.feature.explain)),
       });
     }
     for (const a of deps.apps) {
-      collect({ id: `app:${a.path}`, title: a.name, subtitle: a.path, icon: a.icon, kind: "app", score: 29 });
+      pushGroup({ id: `app:${a.path}`, title: a.name, subtitle: a.path, icon: a.icon, kind: "app", score: 29, section: "plugin" });
     }
     for (const c of deps.commands) {
-      collect({ id: `cmd:${c.id}`, title: c.title, builtinIcon: c.builtinIcon, kind: "command", score: 28 });
+      pushGroup({ id: `cmd:${c.id}`, title: c.title, builtinIcon: c.builtinIcon, kind: "command", score: 28, section: "plugin" });
     }
-    const recent: SearchResult[] = [];
     for (const id of recentIds) {
       const hit = byId.get(id);
-      if (hit) recent.push(hit);
+      if (hit) collect({ ...hit, section: "recent" });
     }
-    // 最近使用排前面；不足则用功能目录补齐
-    for (const r of recent) results.push(r);
+    // 2) 插件功能（未在最近使用里的）
     for (const r of byId.values()) {
-      if (results.length >= RECENT_LIMIT) break;
-      if (!recent.includes(r)) results.push(r);
+      if (r.kind === "plugin" && !recentIds.includes(r.id)) collect(r);
     }
-    return results.slice(0, RECENT_LIMIT);
+    // 3) 市场精选：官方插件 + 打开市场入口
+    const official = ["utools-demo", "devtoolbox", "clipboard-history"];
+    for (const f of deps.features) {
+      if (official.includes(f.pluginId) && !recentIds.includes(`plugin:${f.pluginId}:${f.feature.code}`)) {
+        collect({
+          id: `plugin:${f.pluginId}:${f.feature.code}`,
+          title: f.feature.explain,
+          subtitle: f.displayName,
+          icon: f.logo,
+          kind: "plugin",
+          score: 26,
+          pluginId: f.pluginId,
+          featureCode: f.feature.code,
+          section: "market",
+          pluginCmds: f.feature.cmds.map((c) => (typeof c === "string" ? c : c.explain ?? f.feature.explain)),
+        });
+      }
+    }
+    collect({
+      id: "open:market",
+      title: "插件应用市场",
+      subtitle: "浏览与安装更多插件",
+      builtinIcon: "🛍️",
+      kind: "command",
+      score: 25,
+      section: "market",
+    });
+    return results;
   }
 
   // 频率加权：用过的结果按次数提升（上限 15，不破坏精确度优先序）

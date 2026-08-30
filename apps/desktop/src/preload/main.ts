@@ -25,9 +25,14 @@ const api = {
     return () => ipcRenderer.removeListener(IPC.pluginChanged, l);
   },
   onToast: (cb: (msg: string) => void) => {
-    const l = (_: unknown, msg: string) => cb(msg);
+    const l = (_: unknown, msg: unknown) => cb(msg as string);
     ipcRenderer.on(IPC.uiToast, l);
     return () => ipcRenderer.removeListener(IPC.uiToast, l);
+  },
+  onSettingsShowTab: (cb: (payload: unknown) => void) => {
+    const l = (_: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on(IPC.settingsShowTab, l);
+    return () => ipcRenderer.removeListener(IPC.settingsShowTab, l);
   },
 
   // 配置

@@ -44,6 +44,8 @@ export interface SearchResult {
   pluginCmds?: string[];
   /** 执行时透传给插件的 payload（副命令选中时为其关键字文本） */
   payload?: string;
+  /** 空态网格分组：recent=最近使用 plugin=插件功能 market=市场精选 */
+  section?: "recent" | "plugin" | "market";
 }
 
 export type SearchMode = "search" | "plugin";
