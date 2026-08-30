@@ -151,3 +151,23 @@ cd my-plugin && zip -r ../my-plugin.bkx . -x ".*"
 
 - 清单风格有意兼容 uTools（`features/cmds/main/preload`），uTools 插件只需补一个 `preload.js`（用 `getBK()` 适配 `utools` API 差异）即可迁移。
 - 插件渲染环境是 Chromium（与宿主 Electron 一致），可自由使用现代 Web API；`network` 权限用于声明插件需要联网（用户知情），宿主不代理或拦截页面自身的 fetch。
+
+## uTools 插件兼容（重要）
+
+BoxKit 的插件运行时与 uTools 同构：**插件页面与 preload 具备 Node 能力、无上下文隔离**，uTools 插件基本可以零改动运行：
+
+- 清单兼容：uTools 的 `pluginName` 自动归一化为 `name`（英文转 slug，纯中文回退稳定哈希）+ `displayName`；正则关键字 `minNum` 自动映射为 `minLength`
+- `window.utools` 兼容 API（与 `window.bk` 并存）：
+  - 生命周期：`onPluginEnter / onPluginOut / onSubInputChange / setSubInput / removeSubInput / outPlugin`
+  - 窗口：`hideMainWindow / showMainWindow`
+  - 通知：`notify`（系统通知，点击回面板）
+  - 剪贴板：`copyText / readClipboardText / copyImage(png) / readClipboardImage()`
+  - 文档存储（同步，pouchdb 风格）：`db.put / get / remove / allDocs / post`（`_id/_rev` 冲突检测）
+  - 系统：`openExternal / openPath / getPrimaryDisplay / getAllDisplays / showOpenDialog / showSaveDialog`
+  - 按键注入：`simulateKeyboardTap(key, ...modifiers)`（作用于当前焦点窗口）
+  - 子窗口：`createBrowserWindow(url, options, callback)`（回调句柄提供 `send(channel, data)`）
+  - 环境：`isDarkColors / getAPIVersion / getAppVersion`
+- 暂未支持（调用会抛错）：`redirect`、`fetchUserServerToken`（需 uTools 账号体系）
+- 差异说明：`screenCapture(cb)` 当前为全屏截图兜底（无区域裁剪 UI）
+
+安全说明：与 uTools 相同，插件具备 Node 能力意味着「安装即信任」——请只安装来源可信的插件；安装时的权限确认弹窗列出敏感能力。
