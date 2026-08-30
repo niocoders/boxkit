@@ -572,5 +572,73 @@ export class PluginHost {
       const r = dialog.showSaveDialogSync(win as BrowserWindow, args.options ?? {});
       e.returnValue = { canceled: !r, filePath: r };
     });
+
+    // ————— uTools 兼容：simulateKeyboardTap —————
+    // PowerShell SendKeys 注入组合键（作用于当前焦点窗口）
+    ipcMain.handle(IPC.pkKeyboardTap, async (_e, key: string, modifiers: string[]) => {
+      const mod = Array.isArray(modifiers) ? modifiers.map((m) => String(m).toLowerCase()) : [];
+      let seq = "";
+      if (mod.includes("ctrl")) seq += "^";
+      if (mod.includes("alt")) seq += "%";
+      if (mod.includes("shift")) seq += "+";
+      const k = String(key ?? "");
+      const special: Record<string, string> = {
+        enter: "{ENTER}", tab: "{TAB}", esc: "{ESC}", escape: "{ESC}",
+        up: "{UP}", down: "{DOWN}", left: "{LEFT}", right: "{RIGHT}",
+        backspace: "{BACKSPACE}", delete: "{DELETE}", home: "{HOME}", end: "{END}",
+        pageup: "{PGUP}", pagedown: "{PGDN}", space: " ",
+      };
+      const lower = k.toLowerCase();
+      if (special[lower] !== undefined) seq += special[lower];
+      else if (/^[a-z0-9]$/.test(lower)) seq += lower.toUpperCase();
+      else if (/^F([1-9]|1[0-6])$/.test(k)) seq += `{${k}}`;
+      else if (k.length === 1) seq += k;
+      else throw new Error(`不支持的按键: ${k}`);
+      const script = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('${seq.replace(/'/g, "''")}')`;
+      const { execFile } = await import("node:child_process");
+      await new Promise<void>((resolve, reject) => {
+        execFile("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { timeout: 5000, windowsHide: true }, (err) =>
+          err ? reject(new Error("按键注入失败")) : resolve(),
+        );
+      });
+    });
+
+    // ————— uTools 兼容：createBrowserWindow —————
+    const childWindows = new Map<number, BrowserWindow>();
+
+    ipcMain.handle(
+      IPC.pkCreateBrowserWindow,
+      (e, args: { url?: string; options?: { width?: number; height?: number; preload?: string; nodeIntegration?: boolean } }) => {
+        const p = this.requirePermission(this.senderPlugin(e), "window");
+        if (!args?.url) throw new Error("缺少 url");
+        const url = args.url.startsWith("bk-plugin://")
+          ? args.url
+          : `bk-plugin://${p.manifest.name}/${String(args.url).replace(/^\/+/, "")}`;
+        const opts = args.options ?? {};
+        const preloadAbs = opts.preload ? path.join(p.dir, opts.preload) : undefined;
+        if (preloadAbs && !fs.existsSync(preloadAbs)) throw new Error("preload 文件不存在");
+        const win = new BrowserWindow({
+          width: opts.width ?? 800,
+          height: opts.height ?? 600,
+          show: true,
+          autoHideMenuBar: true,
+          webPreferences: {
+            nodeIntegration: opts.nodeIntegration ?? true,
+            contextIsolation: false,
+            preload: preloadAbs,
+          },
+        });
+        childWindows.set(win.id, win);
+        win.on("closed", () => childWindows.delete(win.id));
+        void win.loadURL(url);
+        return { id: win.id };
+      },
+    );
+
+    // 向子窗口 webContents 转发消息（createBrowserWindow 回调句柄的 send 即此通道）
+    ipcMain.on(IPC.pkBwSend, (_e, id: number, channel: string, data: unknown) => {
+      const w = childWindows.get(Number(id));
+      w?.webContents.send(String(channel), data);
+    });
   }
 }

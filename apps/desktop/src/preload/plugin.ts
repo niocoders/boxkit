@@ -209,18 +209,22 @@ const utools = {
     return "boxkit";
   },
   fetchUserServerToken(): never {
-    throw new Error("utools.fetchUserServerToken 暂未支持");
-  },
-  createBrowserWindow(): never {
-    throw new Error("utools.createBrowserWindow 暂未支持");
+    throw new Error("utools.fetchUserServerToken 暂未支持（需 uTools 账号体系）");
   },
   redirect(): never {
     throw new Error("utools.redirect 暂未支持（请使用 feature cmds 进入插件）");
   },
-  simulateKeyboardTap(): never {
-    throw new Error("utools.simulateKeyboardTap 暂未支持");
+  /** 模拟按键（作用于当前焦点窗口）：utools.simulateKeyboardTap('a', 'ctrl') */
+  simulateKeyboardTap(key: string, ...modifiers: string[]): void {
+    void ipcRenderer.invoke(IPC.pkKeyboardTap, String(key ?? ""), modifiers ?? []);
   },
 };
+
+/** createBrowserWindow 回调句柄：向新窗口 webContents 发消息 */
+export interface BrowserWindowHandle {
+  id: number;
+  send(channel: string, data: unknown): void;
+}
 
 // —— 挂全局（contextIsolation 关闭：页面与 preload 同上下文） ——
 (window as unknown as Record<string, unknown>).bk = bk;
