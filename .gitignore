@@ -13,3 +13,8 @@ tools/license-cli/keys/*.pem
 # 打包产物
 apps/desktop/dist/
 apps/desktop/release/
+
+# 市场生成物（.bkx / manifest / logo 由 tools/build-market.mjs 在 CI 重建，门户 index.html 入库）
+market/manifest.json
+market/plugins/
+market/logo/

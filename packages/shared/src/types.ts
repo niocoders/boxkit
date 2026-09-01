@@ -95,7 +95,7 @@ export interface AppSettings {
   firstLaunchAt: number;
   disabledPlugins: string[];
   devPluginPaths: string[];
-  /** 插件市场服务地址；null = 内置默认（本地开发 http://127.0.0.1:8080） */
+  /** 插件市场服务地址；null = 内置默认（GitHub Pages 静态市场） */
   marketUrl: string | null;
 }
 
@@ -105,25 +105,27 @@ export interface ConfigSetResult {
   hotkeyError: string | null;
 }
 
-/** 插件市场条目（服务端 /api/market/plugins 返回）。 */
+/**
+ * 插件市场条目（market/manifest.json 的 plugins[] 项，由 tools/build-market.mjs 生成）。
+ * fileUrl / logoUrl 在清单里是相对路径，客户端会规范为基于市场地址的绝对 URL。
+ */
 export interface MarketPlugin {
   pluginId: string;
   displayName: string;
   version: string;
   description?: string;
   author?: string;
-  downloads: number;
-  /** logo 的 URL（服务端静态资源） */
+  /** logo 路径（清单内相对路径） */
   logoUrl?: string;
-  /** .bkx 包下载地址 */
+  /** .bkx 包下载地址（清单内相对路径） */
   fileUrl: string;
-  /** 服务端字段：相对存储路径（客户端内部规范为 fileUrl） */
-  filePath?: string;
-  /** 服务端字段：最新版本号 */
-  latestVersion?: string;
-  /** 文件大小（字节），用于展示 */
+  /** .bkx 文件大小（字节），用于展示 */
   fileSize?: number;
-  /** 相对客户端已安装版本的提示（客户端本地比对后覆盖） */
+  /** .bkx 的 sha256（客户端下载后校验） */
+  sha256?: string;
+  /** 关键字（features.cmds 汇总），供市场搜索 */
+  keywords?: string[];
+  /** 相对客户端已安装版本的状态（客户端本地比对后覆盖） */
   installed?: boolean;
   updatable?: boolean;
   localVersion?: string;

@@ -143,9 +143,24 @@ cd my-plugin && zip -r ../my-plugin.bkx . -x ".*"
 安装方式：
 
 - 直接把 `.bkx` 拖入/复制到用户，双击即可唤起 BoxKit 安装确认；
-- 或设置 → 插件 → 「安装插件包」选择文件。
+- 或设置 → 插件 → 「安装插件包」选择文件；
+- 或发布到插件市场让用户一键导入（见下节）。
 
 安装流程：解压到暂存目录 → 展示清单与权限确认 → 用户同意后提交到 `plugins/` 目录。恶意清单（越权字段、路径穿越）在暂存阶段即被拒绝。
+
+## 6.1 发布到插件市场（GitHub Pages 静态市场）
+
+官方市场没有服务端——把插件目录提交到仓库 `plugins/` 下并 push，CI 会自动完成发布：
+
+1. 在 `plugins/` 新建插件目录（含 `plugin.json`，与官方插件结构一致）；
+2. push 到 main 分支 → `pages.yml` 流水线运行 `pnpm market`：
+   - 校验清单（semver 版本号、入口文件、features 等）；
+   - 打包为 `market/plugins/<name>-<version>.bkx`（stored zip，跨三端解压一致）；
+   - 生成 `market/manifest.json`（版本/描述/关键字/sha256）；
+   - 部署 `market/` 到 GitHub Pages。
+3. 用户侧即可在市场门户浏览、在客户端市场页搜索安装（客户端会做 sha256 校验后走标准安装确认）。
+
+**升级插件**：改 `plugin.json` 的 `version` 后 push 即可，客户端会显示「可更新」。CI 校验失败（清单非法、入口缺失）会直接红灯，不会破坏线上市场。
 
 ## 7. 兼容性说明
 

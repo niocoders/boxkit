@@ -16,6 +16,7 @@
     "typecheck": "tsc -p apps/desktop/tsconfig.json --noEmit",
     "test": "vitest run",
     "icons": "node tools/gen-icons.mjs",
+    "market": "node tools/build-market.mjs",
     "license": "node tools/license-cli/index.mjs"
   },
   "devDependencies": {

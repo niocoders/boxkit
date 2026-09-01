@@ -130,7 +130,7 @@ function GeneralView({ showToast }: { showToast: (m: string) => void }) {
         <div className="row">
           <div>
             <div className="row-title">插件市场地址</div>
-            <div className="row-desc">默认 http://127.0.0.1:8080（server/ 目录的本地市场服务）</div>
+            <div className="row-desc">默认 https://niocoders.github.io/boxkit-market（GitHub Pages 静态市场）</div>
           </div>
           <FeedEdit value={cfg.marketUrl ?? ""} onSave={(v) => void save({ marketUrl: v || null })} />
         </div>
@@ -295,7 +295,8 @@ function MarketView({
                   {m.displayName} <span className="ver">v{m.version}</span>
                 </div>
                 <div className="row-desc">
-                  {m.author ?? "未知开发者"} · {(m.downloads ?? 0).toLocaleString()} 次安装
+                  {m.author ?? "未知开发者"}
+                  {m.fileSize ? ` · ${m.fileSize < 1024 ? `${m.fileSize} B` : `${(m.fileSize / 1024).toFixed(1)} KB`}` : ""}
                 </div>
               </div>
             </div>

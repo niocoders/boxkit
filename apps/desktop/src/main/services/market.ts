@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { net } from "electron";
 import fs from "node:fs";
 import os from "node:os";
@@ -8,7 +9,8 @@ import { logger } from "../core/logger.js";
 import { stageInstall } from "../plugins/staging.js";
 import { pluginManager } from "../plugins/manager.js";
 
-const DEFAULT_MARKET_URL = "http://127.0.0.1:8080";
+/** 默认市场：公开仓 boxkit-market 的 GitHub Pages 静态市场（manifest.json + .bkx + 门户页） */
+const DEFAULT_MARKET_URL = "https://niocoders.github.io/boxkit-market";
 const FETCH_TIMEOUT_MS = 10000;
 
 function marketBase(): string {
@@ -45,70 +47,82 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
   }
 }
 
-/** 解析统一返回包装 {code,data} 或裸数组 */
-function unwrap<T>(raw: unknown): T | null {
-  if (Array.isArray(raw)) return raw as T;
-  if (raw && typeof raw === "object" && "data" in (raw as Record<string, unknown>)) {
-    return ((raw as { data: T }).data) ?? null;
-  }
-  return null;
+/** 相对清单路径（plugins/x.bkx、logo/x.svg）→ 绝对 URL */
+function toAbsolute(base: string, u: string | undefined): string {
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+  return new URL(u.replace(/^\/+/, ""), `${base.replace(/\/+$/, "")}/`).href;
+}
+
+/** 拉取市场清单（tools/build-market.mjs 生成，GitHub Pages 托管） */
+async function fetchManifest(base: string): Promise<MarketPlugin[]> {
+  const res = await fetchWithTimeout(`${base.replace(/\/+$/, "")}/manifest.json`, {
+    headers: { "cache-control": "no-cache" },
+  });
+  if (!res.ok) throw new Error(`市场清单返回 ${res.status}`);
+  const json = (await res.json()) as unknown;
+  const list = Array.isArray(json)
+    ? json
+    : Array.isArray((json as { plugins?: MarketPlugin[] })?.plugins)
+      ? (json as { plugins: MarketPlugin[] }).plugins
+      : null;
+  if (!Array.isArray(list)) throw new Error("市场清单格式不正确");
+  return list;
+}
+
+function matchKeyword(entry: MarketPlugin, kw: string): boolean {
+  const q = kw.trim().toLowerCase();
+  if (!q) return true;
+  return [entry.pluginId, entry.displayName, entry.description, entry.author, ...(entry.keywords ?? [])]
+    .filter(Boolean)
+    .some((t) => String(t).toLowerCase().includes(q));
 }
 
 export const marketService = {
-  /** 拉取市场列表并标注本地安装/可更新状态 */
+  /** 拉取市场列表，按关键字过滤并标注本地安装/可更新状态 */
   async fetchMarket(keyword: string): Promise<MarketPlugin[] | { error: string }> {
-    const base = marketBase().replace(/\/+$/, "");
-    const q = keyword.trim() ? `?keyword=${encodeURIComponent(keyword.trim())}` : "";
+    const base = marketBase();
     try {
-      const res = await fetchWithTimeout(`${base}/api/market/plugins${q}`);
-      if (!res.ok) return { error: `市场服务返回 ${res.status}` };
-      const json = (await res.json()) as unknown;
-      // 兼容两种返回：裸数组 或 分页包装 {code,data:{records:[...]}}
-      const page = json as { data?: { records?: MarketPlugin[] } | MarketPlugin[] } | null;
-      const list = Array.isArray(json)
-        ? (json as MarketPlugin[])
-        : Array.isArray(page?.data)
-          ? (page!.data as unknown as MarketPlugin[])
-          : Array.isArray(page?.data?.records)
-            ? page!.data!.records!
-            : null;
-      if (!Array.isArray(list)) return { error: "市场返回格式不正确" };
+      const manifest = await fetchManifest(base);
       const installed = installedMap();
-      return list.map((raw) => {
-        // 服务端字段为 filePath/latestVersion，规范成客户端 fileUrl/version
-        const m = raw as MarketPlugin & { filePath?: string };
-        const local = installed.get(m.pluginId);
-        const version = m.version ?? m.latestVersion ?? "";
-        return {
-          ...m,
-          version,
-          fileUrl: m.fileUrl ?? m.filePath ?? "",
-          installed: !!local,
-          localVersion: local,
-          updatable: !!local && !!version && cmpVersion(version, local) > 0,
-        };
-      });
+      return manifest
+        .filter((entry) => matchKeyword(entry, keyword))
+        .map((entry) => {
+          const local = installed.get(entry.pluginId);
+          return {
+            ...entry,
+            fileUrl: toAbsolute(base, entry.fileUrl),
+            logoUrl: entry.logoUrl ? toAbsolute(base, entry.logoUrl) : undefined,
+            installed: !!local,
+            localVersion: local,
+            updatable: !!local && !!entry.version && cmpVersion(entry.version, local) > 0,
+          };
+        });
     } catch (e) {
-      logger.warn("market", "市场列表获取失败", e);
+      logger.warn("market", "市场清单获取失败", e);
       return { error: "无法连接插件市场（可在设置中修改市场地址）" };
     }
   },
 
-  /** 下载 .bkx → 暂存校验，返回与本地安装一致的 preview 流程 */
+  /** 下载 .bkx → sha256 校验 → 暂存校验，返回与本地安装一致的 preview 流程 */
   async installFromMarket(pluginId: string): Promise<{ preview: InstallPreview; conflict?: string } | { error: string }> {
     if (!pluginId) return { error: "缺少插件 ID" };
     try {
-      const list = await this.fetchMarket("");
-      if ("error" in list) return list;
+      const base = marketBase();
+      const list = await fetchManifest(base);
       const entry = list.find((m) => m.pluginId === pluginId);
       if (!entry) return { error: "市场里找不到该插件" };
-      // 统一走按 ID 的下载路由（不依赖服务端存储布局）
-      const fileUrl = entry.fileUrl?.startsWith("http")
-        ? entry.fileUrl
-        : `${marketBase().replace(/\/+$/, "")}/api/market/plugins/${encodeURIComponent(pluginId)}/download`;
+      const fileUrl = toAbsolute(base, entry.fileUrl);
       const res = await fetchWithTimeout(fileUrl);
       if (!res.ok) return { error: `下载失败（HTTP ${res.status}）` };
       const buf = Buffer.from(await res.arrayBuffer());
+      if (entry.sha256) {
+        const sha = createHash("sha256").update(buf).digest("hex");
+        if (sha !== entry.sha256) {
+          logger.warn("market", `sha256 不匹配：期望 ${entry.sha256}，实际 ${sha}`);
+          return { error: "插件包校验失败（sha256 不匹配），请稍后重试" };
+        }
+      }
       const tmp = path.join(os.tmpdir(), `boxkit-market-${pluginId}-${Date.now()}.bkx`);
       fs.writeFileSync(tmp, buf);
       const staged = await stageInstall(tmp, pluginManager.installedVersions());
