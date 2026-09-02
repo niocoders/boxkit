@@ -8,6 +8,7 @@ import type {
 } from "@boxkit/shared";
 
 export interface SettingsBridge {
+  settingsReady(): void;
   configGet(): Promise<AppSettings>;
   configSet(patch: Partial<AppSettings>): Promise<ConfigSetResult>;
   plugins: {

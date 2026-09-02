@@ -5,6 +5,7 @@ import { IPC } from "@boxkit/shared";
 let win: BrowserWindow | null = null;
 let pendingInstallPreview: unknown = null;
 let pendingShowTab: unknown = null;
+let rendererReady = false;
 
 export function getSettingsWindow(): BrowserWindow | null {
   return win && !win.isDestroyed() ? win : null;
@@ -12,7 +13,7 @@ export function getSettingsWindow(): BrowserWindow | null {
 
 function flushPendingMessages(): void {
   const target = getSettingsWindow();
-  if (!target || target.webContents.isLoadingMainFrame()) return;
+  if (!target || target.webContents.isLoadingMainFrame() || !rendererReady) return;
   target.show();
   target.focus();
   if (pendingShowTab !== null) {
@@ -36,6 +37,11 @@ export function queueInstallPreview(payload: unknown): void {
 export function queueSettingsShowTab(payload: unknown): void {
   pendingShowTab = payload;
   openSettingsWindow();
+  flushPendingMessages();
+}
+
+export function markSettingsReady(): void {
+  rendererReady = true;
   flushPendingMessages();
 }
 
@@ -72,5 +78,6 @@ export function openSettingsWindow(): void {
   win.once("ready-to-show", () => win?.show());
   win.on("closed", () => {
     win = null;
+    rendererReady = false;
   });
 }

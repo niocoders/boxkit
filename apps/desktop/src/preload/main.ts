@@ -52,6 +52,7 @@ const api = {
     ipcRenderer.on(IPC.uiToast, l);
     return () => ipcRenderer.removeListener(IPC.uiToast, l);
   },
+  settingsReady: () => ipcRenderer.send(IPC.settingsReady),
   onSettingsShowTab: (cb: (payload: unknown) => void) => {
     const l = (_unknown: unknown, payload: unknown) => cb(payload);
     ipcRenderer.on(IPC.settingsShowTab, l);

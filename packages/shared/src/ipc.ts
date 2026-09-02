@@ -40,6 +40,7 @@ export const IPC = {
   pluginRemoveDevPath: "plugin:remove-dev-path",
   pluginChanged: "plugin:changed", // main → search renderer：插件集合变化，需要刷新
 
+  settingsReady: "settings:ready", // settings renderer → main：页面监听器已就绪
   settingsShowTab: "settings:show-tab", // main → settings renderer：打开并切换 tab/视图
   settingsInstallPreview: "settings:install-preview", // main → settings renderer：协议导入待确认安装
 

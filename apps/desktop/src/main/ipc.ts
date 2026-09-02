@@ -27,7 +27,7 @@ import { applyHotkey, unregisterAll } from "./services/hotkey.js";
 import { applyAutostart } from "./services/autostart.js";
 import { getMainWindow } from "./windows/mainWindow.js";
 import { showMainWindow } from "./windows/mainWindow.js";
-import { getSettingsWindow, openSettingsWindow, queueSettingsShowTab } from "./windows/settingsWindow.js";
+import { getSettingsWindow, openSettingsWindow, queueSettingsShowTab, markSettingsReady } from "./windows/settingsWindow.js";
 
 const execFileP = promisify(execFile);
 
@@ -76,6 +76,10 @@ export function registerIpc(deps: IpcDeps): void {
   const { pluginHost } = deps;
 
   // ————— 搜索 —————
+  ipcMain.on(IPC.settingsReady, () => {
+    markSettingsReady();
+  });
+
   ipcMain.handle(IPC.searchQuery, (_e, text: string): SearchResult[] =>
     searchQuery(String(text ?? ""), engineDeps()),
   );

@@ -24,6 +24,7 @@ export function App() {
   const [marketRefreshKey, setMarketRefreshKey] = useState(0);
 
   useEffect(() => {
+    boxkit.settingsReady();
     return boxkit.onSettingsShowTab((p) => {
       if (p.tab === "plugins") {
         setTab("plugins");
