@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4   # 版本取自 package.json 的 packageManager
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm audit:governance
+      - run: pnpm build
+      - name: Smoke self-check
+        if: runner.os != 'Linux'
+        working-directory: apps/desktop
+        env:
+          BOXKIT_SMOKE: "1"
+        run: npx electron . --no-sandbox
+      - name: Smoke self-check (xvfb)
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        env:
+          BOXKIT_SMOKE: "1"
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y xvfb
+          xvfb-run -a npx electron . --no-sandbox
