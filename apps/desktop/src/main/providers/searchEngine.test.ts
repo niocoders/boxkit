@@ -81,7 +81,7 @@ describe("searchQuery", () => {
     expect(rs.some((r) => r.kind === "clipboard")).toBe(true);
   });
   it("平台过滤和网络兜底", () => {
-    expect(searchQuery("other", { ...deps, features: [{ pluginId: "p", displayName: "P", feature: { code: "x", explain: "其他", platform: ["darwin"], cmds: ["other"] } }] }).find((r) => r.featureCode === "x")).toBeUndefined();
+    expect(searchQuery("other", { ...deps, features: [{ pluginId: "p", displayName: "P", feature: { code: "x", explain: "其他", platform: ["platform-that-is-not-current"], cmds: ["other"] } }] }).find((r) => r.featureCode === "x")).toBeUndefined();
     expect(searchQuery("zzzznothing", { ...deps, apps: [], features: [], commands: [] }).some((r) => r.kind === "web")).toBe(true);
   });
 });

@@ -3,13 +3,16 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { chromium } from "playwright-core";
 
+const require = createRequire(import.meta.url);
 const toolsDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(toolsDir, "..");
 const desktopRoot = path.join(repoRoot, "apps", "desktop");
-const electronBinary = process.platform === "win32" ? "electron.exe" : "electron";
-const electronPath = path.join(desktopRoot, "node_modules", "electron", "dist", electronBinary);
+const electronPackage = path.join(desktopRoot, "node_modules", "electron");
+const electronCli = path.join(electronPackage, "cli.js");
+const electronPath = require(electronPackage);
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "boxkit-ui-"));
 const artifactDir = path.join(repoRoot, "artifacts", "electron-ui");
 const port = 9237;
