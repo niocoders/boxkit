@@ -11,14 +11,19 @@ import { IPC } from "@boxkit/shared/ipc";
  */
 
 type Cb<T> = (arg: T) => void;
+type EnterArgs = { code: string; type: string; payload: string; option?: unknown; from?: string };
 
-const enterCbs: Cb<{ code: string; type: string; payload: string }>[] = [];
-const outCbs: Cb<void>[] = [];
+const enterCbs: Cb<EnterArgs>[] = [];
+const outCbs: Cb<boolean>[] = [];
+const detachCbs: Cb<void>[] = [];
+const dbPullCbs: Cb<UtoolsDoc[]>[] = [];
 const subInputCbs: Cb<{ text: string }>[] = [];
 
-ipcRenderer.on(IPC.pkEnter, (_e, args) => enterCbs.forEach((cb) => cb(args)));
-ipcRenderer.on(IPC.pkOutEvent, () => outCbs.forEach((cb) => cb()));
+ipcRenderer.on(IPC.pkEnter, (_e, args) => enterCbs.forEach((cb) => cb(args as EnterArgs)));
+ipcRenderer.on(IPC.pkOutEvent, (_e, processExit?: boolean) => outCbs.forEach((cb) => cb(!!processExit)));
+ipcRenderer.on(IPC.pkDetach, () => detachCbs.forEach((cb) => cb()));
 ipcRenderer.on(IPC.pkSubInputChange, (_e, args) => subInputCbs.forEach((cb) => cb(args)));
+ipcRenderer.on(IPC.pkDbPull, (_e, docs) => dbPullCbs.forEach((cb) => cb(docs as UtoolsDoc[])));
 
 /** 同步 IPC 封装（uTools db/对话框是阻塞语义） */
 function sendSync<T = unknown>(channel: string, ...args: unknown[]): T {
@@ -26,11 +31,17 @@ function sendSync<T = unknown>(channel: string, ...args: unknown[]): T {
 }
 
 const lifecycle = {
-  onPluginEnter(cb: Cb<{ code: string; type: string; payload: string }>) {
+  onPluginEnter(cb: Cb<EnterArgs>) {
     enterCbs.push(cb);
   },
-  onPluginOut(cb: Cb<void>) {
+  onPluginOut(cb: Cb<boolean>) {
     outCbs.push(cb);
+  },
+  onPluginDetach(cb: Cb<void>) {
+    detachCbs.push(cb);
+  },
+  onDbPull(cb: Cb<UtoolsDoc[]>) {
+    dbPullCbs.push(cb);
   },
   onSubInputChange(cb: Cb<{ text: string }>) {
     subInputCbs.push(cb);
@@ -38,14 +49,41 @@ const lifecycle = {
 };
 
 const subinput = {
-  setSubInput(options: { placeholder: string; isFocus?: boolean }) {
-    ipcRenderer.send(IPC.pkSubInputSet, {
-      placeholder: String(options?.placeholder ?? ""),
-      isFocus: !!options?.isFocus,
-    });
+  setSubInput(
+    callbackOrOptions: ((text: string) => void) | { placeholder?: string; isFocus?: boolean },
+    placeholder?: string,
+    isFocus?: boolean,
+  ): boolean {
+    if (typeof callbackOrOptions === "function") {
+      subInputCbs.push((args) => callbackOrOptions(args.text));
+      ipcRenderer.send(IPC.pkSubInputSet, { placeholder: String(placeholder ?? ""), isFocus: !!isFocus });
+    } else {
+      ipcRenderer.send(IPC.pkSubInputSet, {
+        placeholder: String(callbackOrOptions?.placeholder ?? ""),
+        isFocus: !!callbackOrOptions?.isFocus,
+      });
+    }
+    return true;
   },
-  removeSubInput() {
+  removeSubInput(): boolean {
     ipcRenderer.send(IPC.pkSubInputRemove);
+    return true;
+  },
+  setSubInputValue(value: string): boolean {
+    ipcRenderer.send(IPC.pkSubInputValue, String(value ?? ""));
+    return true;
+  },
+  subInputFocus(): boolean {
+    ipcRenderer.send(IPC.pkSubInputFocus);
+    return true;
+  },
+  subInputSelect(): boolean {
+    ipcRenderer.send(IPC.pkSubInputSelect);
+    return true;
+  },
+  subInputBlur(): boolean {
+    ipcRenderer.send(IPC.pkSubInputBlur);
+    return true;
   },
 };
 
@@ -137,24 +175,47 @@ const utools = {
   // —— 窗口 ——
   outPlugin() {
     ipcRenderer.send(IPC.pkOut);
+    return true;
   },
   hideMainWindow() {
     ipcRenderer.send(IPC.pkHideMain);
+    return true;
   },
   showMainWindow() {
     ipcRenderer.send(IPC.pkShowMain);
+    return true;
+  },
+  setExpendHeight(height: number) {
+    ipcRenderer.send(IPC.pkResizeHeight, Number(height));
+    return true;
   },
 
   // —— 通知 / 剪贴板 ——
-  notify(body: string) {
-    ipcRenderer.send(IPC.pkNotify, String(body ?? ""));
+  notify(body: string, featureName?: string) {
+    ipcRenderer.send(IPC.pkNotify, String(featureName ? `${featureName}: ${body}` : body ?? ""));
+    return true;
+  },
+  showNotification(body: string, featureName?: string) {
+    ipcRenderer.send(IPC.pkNotify, String(featureName ? `${featureName}: ${body}` : body ?? ""));
+    return true;
   },
   copyText(text: string) {
-    void ipcRenderer.invoke(IPC.pkClipboardWrite, String(text ?? ""));
+    try {
+      ipcRenderer.sendSync(IPC.pkClipboardWriteSync, String(text ?? ""));
+      return true;
+    } catch {
+      return false;
+    }
   },
-  /** 复制图片到剪贴板（PNG buffer，同步语义 fire-and-forget） */
-  copyImage(png: Buffer) {
-    void ipcRenderer.invoke(IPC.pkClipboardWriteImage, Buffer.from(png as unknown as ArrayBuffer));
+  /** 复制图片到剪贴板（PNG buffer），返回是否成功 */
+  copyImage(png: Buffer | Uint8Array | string) {
+    try {
+      const data = typeof png === "string" ? Buffer.from(png, "base64") : Buffer.from(png);
+      ipcRenderer.sendSync(IPC.pkClipboardWriteImageSync, data);
+      return true;
+    } catch {
+      return false;
+    }
   },
   /** 读取剪贴板图片 → PNG Buffer（异步） */
   readClipboardImage(): Promise<Buffer | null> {
@@ -163,13 +224,13 @@ const utools = {
   readClipboardText(): Promise<string> {
     return ipcRenderer.invoke(IPC.pkClipboardRead);
   },
-  /** 截屏 → PNG Buffer（当前为全屏兜底实现，经回调返回） */
-  screenCapture(cb: (png: Buffer) => void): void {
+  /** 截屏 → uTools 兼容的 base64 data URL 回调 */
+  screenCapture(cb: (imageBase64: string) => void): void {
     void ipcRenderer
       .invoke(IPC.pkScreenCapture)
       .then((png: Buffer) => {
         const b = Buffer.from(png);
-        if (b.length) cb(b); // 空缓冲 = 用户取消
+        if (b.length) cb(`data:image/png;base64,${b.toString("base64")}`);
       })
       .catch((err: unknown) => console.error("[boxkit] screenCapture 失败:", err));
   },
@@ -196,6 +257,28 @@ const utools = {
   showSaveDialog(options: unknown) {
     return sendSync(IPC.pkDialogSaveSync, { kind: "save", options });
   },
+  createBrowserWindow(
+    url: string,
+    options?: Record<string, unknown>,
+    callback?: (win: BrowserWindowHandle) => void,
+  ): BrowserWindowHandle | null {
+    try {
+      const result = sendSync(IPC.pkCreateBrowserWindowSync, { url, options });
+      const handle = result
+        ? { id: Number((result as { id: number }).id), send(channel: string, ...data: unknown[]) {
+            ipcRenderer.send(IPC.pkBwSend, Number((result as { id: number }).id), channel, ...data);
+          } }
+        : null;
+      if (handle && callback) callback(handle);
+      return handle;
+    } catch {
+      return null;
+    }
+  },
+  sendToParent(channel: string, ...data: unknown[]) {
+    ipcRenderer.send(IPC.pkParentSend, String(channel), ...data);
+    return true;
+  },
 
   // —— 环境 ——
   isDarkColors(): boolean {
@@ -215,9 +298,19 @@ const utools = {
   fetchUserServerToken(): Promise<{ token: string; userId: string; pluginId: string }> {
     return ipcRenderer.invoke(IPC.pkUserToken);
   },
-  /** 重定向到其他插件功能：utools.redirect({ cmd: "关键字", payload? }) */
-  redirect(redirectInput: { cmd: string; payload?: string }): Promise<{ ok: boolean }> {
-    return ipcRenderer.invoke(IPC.pkRedirect, redirectInput);
+  /** uTools 兼容：redirect(label 或 label 列表, payload) */
+  redirect(
+    label: string | string[] | { cmd: string; payload?: unknown },
+    payload?: string | { type?: "text" | "img" | "files"; data?: unknown },
+  ): boolean {
+    try {
+      const input = typeof label === "object" && !Array.isArray(label)
+        ? label
+        : { cmd: Array.isArray(label) ? label[0] : label, payload };
+      return !!sendSync(IPC.pkRedirectSync, input);
+    } catch {
+      return false;
+    }
   },
   /** 模拟按键（作用于当前焦点窗口）：utools.simulateKeyboardTap('a', 'ctrl') */
   simulateKeyboardTap(key: string, ...modifiers: string[]): void {

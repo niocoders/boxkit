@@ -104,6 +104,13 @@ describe("searchQuery", () => {
     expect(hit?.pluginCmds).toContain("ts");
   });
 
+  it("platform 字段过滤当前平台", () => {
+    const rs = searchQuery("other", {
+      ...deps,
+      features: [{ pluginId: "platform-plugin", displayName: "Platform", feature: { code: "x", explain: "其他", platform: ["darwin"], cmds: ["other"] } }],
+    });
+    expect(rs.find((r) => r.featureCode === "x")).toBeUndefined();
+  });
   it("无结果时提供网络搜索兜底", () => {
     const rs = searchQuery("zzzznothing", { ...deps, apps: [], features: [], commands: [] });
     expect(rs.some((r) => r.kind === "web")).toBe(true);

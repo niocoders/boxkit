@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PluginModeState, SearchResult } from "@boxkit/shared";
+import { IPC, type PluginModeState, type SearchResult } from "@boxkit/shared";
 import { boxkit } from "./bridge.js";
 
 type Mode = "search" | "plugin";
@@ -91,6 +91,16 @@ export function App() {
     } catch {
       setResults([]);
     }
+  }, []);
+
+  // 插件兼容 API 对主搜索框的值/焦点控制
+  useEffect(() => {
+    const off = boxkit.onInputCommand?.((command, value) => {
+      if (command === IPC.searchSetInput) setQuery(String(value ?? ""));
+      if (command === IPC.searchInputFocus || command === IPC.searchInputSelect) inputRef.current?.focus();
+      if (command === IPC.searchInputBlur) inputRef.current?.blur();
+    });
+    return () => off?.();
   }, []);
 
   // 主进程模式推送（搜索 ⇄ 插件）

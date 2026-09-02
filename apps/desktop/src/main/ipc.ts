@@ -179,7 +179,7 @@ export function registerIpc(deps: IpcDeps): void {
     const parent = getSettingsWindow() ?? getMainWindow() ?? undefined;
     const picked = await dialog.showOpenDialog(parent as BrowserWindow, {
       title: "选择插件包",
-      filters: [{ name: "BoxKit 插件", extensions: ["bkx", "zip"] }],
+      filters: [{ name: "插件包", extensions: ["bkx", "upx", "zip"] }],
       properties: ["openFile"],
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
@@ -213,9 +213,13 @@ export function registerIpc(deps: IpcDeps): void {
     pluginHost.destroyView(String(name));
   });
   ipcMain.handle(IPC.pluginUninstall, (_e, name: string) => {
-    pluginHost.destroyView(String(name));
-    pluginManager.clearPluginData(String(name));
-    pluginManager.uninstall(String(name));
+    const pluginName = String(name);
+    const current = pluginManager.get(pluginName);
+    if (!current) return { ok: false, error: "插件不存在" };
+    if (current.source === "dev") return { ok: false, error: "开发插件请在设置中移除开发目录" };
+    pluginHost.destroyView(pluginName);
+    pluginManager.clearPluginData(pluginName);
+    pluginManager.uninstall(pluginName);
     return { ok: true };
   });
   ipcMain.handle(IPC.pluginAddDevPath, async () => {
@@ -232,7 +236,12 @@ export function registerIpc(deps: IpcDeps): void {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   });
-  ipcMain.on(IPC.pluginRemoveDevPath, (_e, dir: string) => pluginManager.removeDevPath(String(dir)));
+  ipcMain.on(IPC.pluginRemoveDevPath, (_e, dir: string) => {
+    const target = String(dir);
+    const p = pluginManager.all().find((plugin) => plugin.source === "dev" && plugin.dir === target);
+    if (p) pluginHost.destroyView(p.manifest.name);
+    pluginManager.removeDevPath(target);
+  });
 
   // ————— 更新 —————
   ipcMain.handle(IPC.updaterState, () => updaterState());

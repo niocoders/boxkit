@@ -1,58 +1,108 @@
 import { z } from "zod";
 import { PLUGIN_PERMISSIONS } from "./types.js";
 
-/** 插件 feature 的 cmd：字符串关键字 或 正则匹配器（兼容 uTools 的 minNum 字段）。 */
+/**
+ * 插件资源路径必须是插件根目录内的相对路径。
+ * 同时拒绝 POSIX/Windows 绝对路径、空字节和任意 .. 段，供 builder 与安装器共用。
+ */
+export function isSafePluginPath(value: unknown): value is string {
+  if (typeof value !== "string" || !value || value.includes("\0")) return false;
+  if (/^(?:[a-zA-Z]:[\\/]|[\\/]{1,2})/.test(value)) return false;
+  const parts = value.split(/[\\/]+/);
+  return parts.every((part) => part !== ".." && part !== "");
+}
+
+/** 插件 feature 的 cmd：字符串或 uTools 风格对象。 */
 export const cmdSchema = z.union([
   z.string().min(1),
-  z.object({
-    type: z.literal("regex"),
-    match: z.string().min(1),
-    minLength: z.number().int().min(1).max(200).optional(),
-    /** uTools 风格：最少输入字符数（与 minLength 等价，读取时已归一） */
-    minNum: z.number().int().min(1).max(200).optional(),
-    explain: z.string().optional(),
-  }),
+  z
+    .object({
+      /** regex / img / files / window / over 等 uTools 类型，未知类型保留给插件自行处理 */
+      type: z.string().min(1).default("regex"),
+      /** regex cmd 使用；img/files/window 等 uTools cmd 不要求 match */
+      match: z.string().min(1).optional(),
+      minLength: z.number().int().min(1).max(200).optional(),
+      /** uTools 风格：最少输入字符数（与 minLength 等价，读取时已归一） */
+      minNum: z.number().int().min(1).max(200).optional(),
+      explain: z.string().optional(),
+      label: z.string().optional(),
+      fileType: z.array(z.string()).optional(),
+      maxLength: z.number().int().min(1).max(10000).optional(),
+    })
+    .passthrough()
+    .superRefine((value, ctx) => {
+      if (value.type === "regex" && !value.match) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["match"],
+          message: "regex 命令必须包含 match",
+        });
+      }
+    }),
 ]);
 export type PluginCmd = z.infer<typeof cmdSchema>;
 
-export const featureSchema = z.object({
-  code: z
-    .string()
-    .min(1)
-    .regex(/^[A-Za-z0-9_-]+$/, "feature.code 仅允许字母数字下划线中划线"),
-  explain: z.string().min(1),
-  cmds: z.array(cmdSchema).min(1),
-});
+export const featureSchema = z
+  .object({
+    code: z
+      .string()
+      .min(1)
+      .regex(/^[A-Za-z0-9_-]+$/, "feature.code 仅允许字母数字下划线中划线"),
+    explain: z.string().min(1),
+    cmds: z.array(cmdSchema).min(1),
+    platform: z.union([z.string(), z.array(z.string())]).optional(),
+    icon: z.string().optional(),
+    mainHide: z.boolean().optional(),
+    mainPush: z.boolean().optional(),
+  })
+  .passthrough();
 export type PluginFeature = z.infer<typeof featureSchema>;
 
 export const permissionsSchema = z.enum(PLUGIN_PERMISSIONS);
 
 /**
  * plugin.json 校验 schema。
- * 设计上兼容 uTools 插件清单风格（features/cmds/main/preload），便于生态迁移。
+ * 设计上兼容 uTools 清单风格（features/cmds/main/preload），便于生态迁移。
  */
-export const manifestSchema = z.object({
-  /** 插件唯一 ID：小写字母数字与中划线（uTools 插件可只写 pluginName，会自动归一化） */
-  name: z
-    .string()
-    .min(2)
-    .max(64)
-    .regex(/^[a-z0-9][a-z0-9-]*$/, "name 仅允许小写字母、数字与中划线"),
-  displayName: z.string().min(1).max(64),
-  version: z
-    .string()
-    .regex(/^\d+\.\d+\.\d+(-[\w.]+)?$/, "version 需符合 semver，如 1.0.0"),
-  description: z.string().max(500).optional(),
-  author: z.string().max(64).optional(),
-  /** 插件入口 HTML（相对插件根目录） */
-  main: z.string().default("index.html"),
-  /** 可选的沙箱 preload 脚本（相对插件根目录），可获得 window.bk API */
-  preload: z.string().optional(),
-  logo: z.string().optional(),
-  permissions: z.array(permissionsSchema).default([]),
-  features: z.array(featureSchema).min(1),
-  minHostVersion: z.string().optional(),
-});
+export const manifestSchema = z
+  .object({
+    /** 插件唯一 ID：小写字母数字与中划线（uTools 插件可只写 pluginName，会自动归一化） */
+    name: z
+      .string()
+      .min(2)
+      .max(64)
+      .regex(/^[a-z0-9][a-z0-9-]*$/, "name 仅允许小写字母、数字与中划线"),
+    /** uTools 原始字段，normalize 后仍保留 */
+    pluginName: z.string().min(1).max(128).optional(),
+    displayName: z.string().min(1).max(64),
+    version: z
+      .string()
+      .regex(/^\d+\.\d+\.\d+(-[\w.]+)?$/, "version 需符合 semver，如 1.0.0"),
+    description: z.string().max(500).optional(),
+    author: z.string().max(128).optional(),
+    main: z.string().default("index.html"),
+    preload: z.string().optional(),
+    logo: z.string().optional(),
+    permissions: z.array(permissionsSchema).default([]),
+    features: z.array(featureSchema).min(1),
+    minHostVersion: z.string().optional(),
+    platform: z.union([z.string(), z.array(z.string())]).optional(),
+    homepage: z.string().optional(),
+    pluginSetting: z.record(z.string(), z.unknown()).optional(),
+  })
+  .passthrough()
+  .superRefine((value, ctx) => {
+    for (const key of ["main", "preload", "logo"] as const) {
+      const resource = value[key];
+      if (resource !== undefined && !isSafePluginPath(resource)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `${key} 必须是插件根目录内的相对路径`,
+        });
+      }
+    }
+  });
 export type PluginManifest = z.infer<typeof manifestSchema>;
 
 export class ManifestError extends Error {
@@ -95,7 +145,7 @@ export function normalizeUtoolsManifest<T>(input: T): T {
       const feat = { ...(f as Record<string, unknown>) };
       if (Array.isArray(feat.cmds)) {
         feat.cmds = feat.cmds.map((c: unknown) => {
-          if (c && typeof c === "object" && (c as Record<string, unknown>).type === "regex") {
+          if (c && typeof c === "object") {
             const rc = { ...(c as Record<string, unknown>) };
             if (rc.minLength === undefined && rc.minNum !== undefined) {
               rc.minLength = rc.minNum;
@@ -104,6 +154,9 @@ export function normalizeUtoolsManifest<T>(input: T): T {
           }
           return c;
         });
+      }
+      if (typeof feat.explain !== "string" || !feat.explain.trim()) {
+        feat.explain = typeof feat.code === "string" && feat.code.trim() ? feat.code : "插件功能";
       }
       return feat;
     });

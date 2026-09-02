@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { app } from "electron";
 import {
   safeParseManifest,
   type PluginListItem,
@@ -10,6 +9,7 @@ import { pluginDataDir, pluginsDir, stagingDir } from "../core/paths.js";
 import { logger } from "../core/logger.js";
 import { settings } from "../core/config.js";
 import { logoToDataUrl } from "./staging.js";
+import { commandLabel } from "../providers/searchEngine.js";
 
 export interface LoadedPlugin {
   manifest: PluginManifest;
@@ -88,37 +88,17 @@ export class PluginManager {
   private watchDebounce = new Map<string, NodeJS.Timeout>();
 
   init(): void {
-    this.seedOfficialPlugins();
     this.rescan();
+    const devDir = process.env.BOXKIT_DEV_PLUGIN_DIR?.trim();
+    if (devDir) this.watchDevPath(path.resolve(devDir));
     for (const p of settings.get().devPluginPaths) this.watchDevPath(p);
     logger.info("plugins", `已加载 ${this.plugins.size} 个插件`);
   }
 
   /**
-   * 把随包分发的官方插件（dev: 仓库 plugins/，打包: resources/plugins）
-   * 首次安装到用户插件目录；已存在（或用户已卸载）则跳过。
+   * 读取插件目录。官方插件不再随主程序内置；正式插件只能来自用户安装目录，
+   * 开发插件只能来自设置中的开发目录或 BOXKIT_DEV_PLUGIN_DIR。
    */
-  private seedOfficialPlugins(): number {
-    const src = app.isPackaged
-      ? path.join(process.resourcesPath, "plugins")
-      : path.resolve(__dirname, "../../../../plugins");
-    let seeded = 0;
-    try {
-      for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        if (!fs.existsSync(path.join(src, entry.name, "plugin.json"))) continue;
-        const dest = path.join(pluginsDir(), entry.name);
-        if (fs.existsSync(dest)) continue;
-        fs.cpSync(path.join(src, entry.name), dest, { recursive: true });
-        seeded++;
-      }
-    } catch {
-      /* 无官方插件目录 */
-    }
-    if (seeded > 0) logger.info("plugins", `首次安装官方插件 ${seeded} 个`);
-    return seeded;
-  }
-
   onChange(cb: () => void): () => void {
     this.changeListeners.add(cb);
     return () => this.changeListeners.delete(cb);
@@ -194,7 +174,7 @@ export class PluginManager {
         features: p.manifest.features.map((f) => ({
           code: f.code,
           explain: f.explain,
-          cmds: f.cmds.map((c) => (typeof c === "string" ? c : c.match)),
+          cmds: f.cmds.map((c) => commandLabel(c, f.explain)),
         })),
       }));
   }
@@ -242,41 +222,44 @@ export class PluginManager {
     if (!fs.existsSync(path.join(dir, "plugin.json"))) {
       throw new Error("该目录下没有 plugin.json");
     }
+    const resolved = path.resolve(dir);
     const paths = settings.get().devPluginPaths;
-    if (paths.includes(dir)) return;
-    settings.set({ devPluginPaths: [...paths, dir] });
+    if (paths.includes(resolved)) return;
+    settings.set({ devPluginPaths: [...paths, resolved] });
     this.rescan();
-    this.watchDevPath(dir);
+    this.watchDevPath(resolved);
     this.notifyChange();
   }
 
   removeDevPath(dir: string): void {
-    settings.set({ devPluginPaths: settings.get().devPluginPaths.filter((p) => p !== dir) });
-    this.watchers.get(dir)?.close();
-    this.watchers.delete(dir);
+    const resolved = path.resolve(dir);
+    settings.set({ devPluginPaths: settings.get().devPluginPaths.filter((p) => path.resolve(p) !== resolved) });
+    this.watchers.get(resolved)?.close();
+    this.watchers.delete(resolved);
     this.rescan();
     this.notifyChange();
   }
 
   /** 开发目录热重载监听 */
   private watchDevPath(dir: string): void {
-    if (this.watchers.has(dir)) return;
+    const resolved = path.resolve(dir);
+    if (this.watchers.has(resolved)) return;
     try {
-      const watcher = fs.watch(dir, { recursive: true }, () => {
-        const prev = this.watchDebounce.get(dir);
+      const watcher = fs.watch(resolved, { recursive: true }, () => {
+        const prev = this.watchDebounce.get(resolved);
         if (prev) clearTimeout(prev);
         this.watchDebounce.set(
-          dir,
+          resolved,
           setTimeout(() => {
-            logger.info("plugins", `开发目录变更，重载: ${dir}`);
+            logger.info("plugins", `开发目录变更，重载: ${resolved}`);
             this.rescan();
             this.notifyChange();
           }, 400),
         );
       });
-      this.watchers.set(dir, watcher);
+      this.watchers.set(resolved, watcher);
     } catch (e) {
-      logger.warn("plugins", `监听开发目录失败(${dir})`, e);
+      logger.warn("plugins", `监听开发目录失败(${resolved})`, e);
     }
   }
 

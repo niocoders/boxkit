@@ -8,6 +8,10 @@ export const IPC = {
   searchExecute: "search:execute",
   searchHide: "search:hide",
   searchInput: "search:input", // renderer → main：插件模式下转发输入框内容
+  searchSetInput: "search:set-input", // main → renderer：uTools.setSubInputValue
+  searchInputFocus: "search:input-focus", // main → renderer
+  searchInputSelect: "search:input-select", // main → renderer
+  searchInputBlur: "search:input-blur", // main → renderer
   pluginExit: "plugin:exit", // renderer → main：点击返回按钮退出插件
   pluginState: "plugin:state", // main → search renderer：搜索/插件模式切换
   uiToast: "ui:toast", // main → renderer：气泡通知
@@ -34,6 +38,7 @@ export const IPC = {
   licenseDeactivate: "license:deactivate",
 
   settingsShowTab: "settings:show-tab", // main → settings renderer：打开并切换 tab/视图
+  settingsInstallPreview: "settings:install-preview", // main → settings renderer：协议导入待确认安装
 
   // —— 插件市场（settings renderer ↔ main）——
   marketFetch: "market:fetch", // invoke：拉取市场列表（keyword 参数）
@@ -55,9 +60,16 @@ export const IPC = {
   pkEnter: "pk:enter", // main → plugin：进入事件 {code,type,payload}
   pkOut: "pk:out", // plugin → main：退出插件
   pkOutEvent: "pk:out-event", // main → plugin：已退出通知
+  pkDetach: "pk:detach", // main → plugin：插件视图被卸载
   pkSubInputSet: "pk:subinput:set", // plugin → main
   pkSubInputRemove: "pk:subinput:remove", // plugin → main
+  pkSubInputValue: "pk:subinput:value", // utools.setSubInputValue
+  pkSubInputFocus: "pk:subinput:focus", // utools.subInputFocus
+  pkSubInputSelect: "pk:subinput:select", // utools.subInputSelect
+  pkSubInputBlur: "pk:subinput:blur", // utools.subInputBlur
   pkSubInputChange: "pk:subinput:change", // main → plugin
+  pkParentSend: "pk:parent:send", // utools.sendToParent
+  pkSubInputCommand: "pk:subinput:command", // plugin → main renderer command
   pkDbGet: "pk:db:get",
   pkDbPut: "pk:db:put",
   pkDbRemove: "pk:db:remove",
@@ -65,14 +77,19 @@ export const IPC = {
   pkClipboardRead: "pk:clipboard:read",
   pkClipboardWrite: "pk:clipboard:write",
   pkClipboardWriteImage: "pk:clipboard:write-image", // utools.copyImage(pngBuffer)
+  pkClipboardWriteImageSync: "pk:clipboard:write-image-sync", // utools.copyImage 同步返回值
   pkClipboardReadImage: "pk:clipboard:read-image", // utools.readClipboardImage()
+  pkClipboardWriteSync: "pk:clipboard:write-sync", // utools.copyText() 的同步返回值
+  pkClipboardReadSync: "pk:clipboard:read-sync", // 兼容同步读文本
   pkScreenCapture: "pk:screen-capture", // utools.screenCapture（区域裁剪）
   pkScreenCaptureRegion: "pk:screen-capture-region", // 选区确认（overlay → main）
   pkRedirect: "pk:redirect", // utools.redirect({cmd,payload})
+  pkRedirectSync: "pk:redirect-sync", // utools.redirect(label,payload) 同步返回
   pkUserToken: "pk:user-token", // utools.fetchUserServerToken
   pkNotify: "pk:notify",
   pkOpenExternal: "pk:open-external",
   pkResize: "pk:resize",
+  pkResizeHeight: "pk:resize-height", // utools.setExpendHeight
   pkDisplaySize: "pk:display-size",
   // —— uTools 兼容层（window.utools）——
   pkHideMain: "pk:hide-main", // utools.hideMainWindow()
@@ -83,8 +100,10 @@ export const IPC = {
   pkDbDocPut: "pk:db-doc:put", // utools.db.put(doc)（同步 IPC）
   pkDbDocRemove: "pk:db-doc:remove", // utools.db.remove(doc)（同步 IPC）
   pkDbDocAll: "pk:db-doc:all", // utools.db.allDocs()（同步 IPC）
+  pkDbPull: "pk:db-pull", // utools.onDbPull(docs[])
   pkKeyboardTap: "pk:keyboard-tap", // utools.simulateKeyboardTap
   pkCreateBrowserWindow: "pk:bw:create", // utools.createBrowserWindow
+  pkCreateBrowserWindowSync: "pk:bw:create-sync", // utools.createBrowserWindow 同步句柄
   pkBwSend: "pk:bw:send", // 向已创建的子窗口 webContents 发消息
   pkDialogOpenSync: "pk:dialog:open-sync", // utools.showOpenDialog（同步 IPC）
   pkDialogSaveSync: "pk:dialog:save-sync", // utools.showSaveDialog（同步 IPC）

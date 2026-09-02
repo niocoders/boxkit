@@ -106,7 +106,7 @@ export interface ConfigSetResult {
 }
 
 /**
- * 插件市场条目（market/manifest.json 的 plugins[] 项，由 tools/build-market.mjs 生成）。
+ * 插件市场条目（公开仓 boxkit-market Pages 的 manifest.json plugins[] 项）。
  * fileUrl / logoUrl 在清单里是相对路径，客户端会规范为基于市场地址的绝对 URL。
  */
 export interface MarketPlugin {

@@ -6,6 +6,7 @@ export interface BoxkitBridge {
   hide(): void;
   openSettings(): void;
   sendInput(text: string): void;
+  onInputCommand?(cb: (command: string, value?: unknown) => void): () => void;
   exitPlugin(): void;
   onPluginState(cb: (s: PluginModeState) => void): () => void;
   onPluginChanged(cb: () => void): () => void;

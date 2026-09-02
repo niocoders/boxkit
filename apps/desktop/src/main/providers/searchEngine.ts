@@ -29,6 +29,21 @@ export interface EngineDeps {
   usage?: Record<string, { count: number; last: number }>;
 }
 
+function platformMatches(platform: string | string[] | undefined): boolean {
+  if (!platform) return true;
+  const values = Array.isArray(platform) ? platform : [platform];
+  const current = process.platform === "darwin" ? "darwin" : process.platform;
+  return values.some((value) => {
+    const v = value.toLowerCase();
+    return v === current || (current === "win32" && (v === "win32" || v === "windows" || v === "win"));
+  });
+}
+
+export function commandLabel(cmd: PluginFeature["cmds"][number], fallback: string): string {
+  if (typeof cmd === "string") return cmd;
+  return cmd.label ?? cmd.explain ?? fallback;
+}
+
 const regexCache = new Map<string, RegExp | null>();
 
 function compiledRegex(pattern: string): RegExp | null {
@@ -87,6 +102,7 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
       if (!byId.has(r.id)) byId.set(r.id, r);
     };
     for (const f of deps.features) {
+      if (!platformMatches(f.feature.platform)) continue;
       pushGroup({
         id: `plugin:${f.pluginId}:${f.feature.code}`,
         title: f.feature.explain,
@@ -97,7 +113,7 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
         pluginId: f.pluginId,
         featureCode: f.feature.code,
         section: "plugin",
-        pluginCmds: f.feature.cmds.map((c) => (typeof c === "string" ? c : c.explain ?? f.feature.explain)),
+        pluginCmds: f.feature.cmds.map((c) => (typeof c === "string" ? c : commandLabel(c, f.feature.explain))),
       });
     }
     for (const a of deps.apps) {
@@ -142,7 +158,7 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
           pluginId: f.pluginId,
           featureCode: f.feature.code,
           section: "market",
-          pluginCmds: f.feature.cmds.map((c) => (typeof c === "string" ? c : c.explain ?? f.feature.explain)),
+          pluginCmds: f.feature.cmds.map((c) => (typeof c === "string" ? c : commandLabel(c, f.feature.explain))),
         });
       }
     }
@@ -195,6 +211,7 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
   }
 
   for (const f of deps.features) {
+    if (!platformMatches(f.feature.platform)) continue;
     let best: number | null = null;
     let bestType: "text" | "regex" | "over" = "text";
     for (const cmd of f.feature.cmds) {
@@ -204,7 +221,7 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
           best = s + 8; // 插件关键字加权，优先于应用
           bestType = q === cmd.trim().toLowerCase() ? "over" : "text";
         }
-      } else {
+      } else if (cmd.type === "regex" && cmd.match) {
         const min = cmd.minLength ?? 1;
         if (q.length >= min) {
           const re = compiledRegex(cmd.match);
@@ -231,7 +248,7 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
         featureCode: f.feature.code,
         cmdType: bestType,
         pluginCmds: f.feature.cmds.map((c) =>
-          typeof c === "string" ? c : c.explain ?? f.feature.explain,
+          typeof c === "string" ? c : commandLabel(c, f.feature.explain),
         ),
       });
     }

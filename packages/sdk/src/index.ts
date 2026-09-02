@@ -1,3 +1,81 @@
+export interface UtoolsCommandPayload {
+  type?: "text" | "img" | "files";
+  data?: unknown;
+}
+
+export interface UtoolsPluginEnterArgs extends PluginEnterArgs {
+  option?: unknown;
+  from?: string;
+}
+
+export interface UtoolsDisplay {
+  id: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  workArea: { x: number; y: number; width: number; height: number };
+  size: { width: number; height: number };
+  scaleFactor: number;
+}
+
+export interface UtoolsApi {
+  onPluginEnter(callback: (args: UtoolsPluginEnterArgs) => void): void;
+  onPluginOut(callback: (processExit: boolean) => void): void;
+  onPluginDetach(callback: () => void): void;
+  onDbPull(callback: (docs: unknown[]) => void): void;
+  setSubInput(callback: (text: string) => void, placeholder?: string, isFocus?: boolean): boolean;
+  onSubInputChange(callback: (text: string) => void): void;
+  removeSubInput(): boolean;
+  setSubInputValue(value: string): boolean;
+  subInputFocus(): boolean;
+  subInputSelect(): boolean;
+  subInputBlur(): boolean;
+  outPlugin(isKill?: boolean): boolean;
+  hideMainWindow(isRestore?: boolean): boolean;
+  showMainWindow(): boolean;
+  setExpendHeight(height: number): boolean;
+  notify(body: string, featureName?: string): boolean;
+  showNotification(body: string, featureName?: string): boolean;
+  copyText(text: string): boolean;
+  copyImage(data: Uint8Array | string): boolean;
+  readClipboardText(): Promise<string>;
+  readClipboardImage(): Promise<Uint8Array | null>;
+  screenCapture(callback: (imageBase64: string) => void): void;
+  db: {
+    get(id: string): unknown | null;
+    put(doc: Record<string, unknown>): { ok: boolean; id?: string; rev?: string; error?: string };
+    post(data: unknown): { ok: boolean; id?: string; rev?: string; error?: string };
+    remove(doc: Record<string, unknown>): { ok: boolean; error?: string };
+    allDocs(): unknown[];
+  };
+  openExternal(url: string): Promise<void>;
+  openPath(target: string): Promise<string>;
+  getPrimaryDisplay(): UtoolsDisplay;
+  getAllDisplays(): UtoolsDisplay[];
+  showOpenDialog(options?: unknown): string[] | undefined;
+  showSaveDialog(options?: unknown): string | undefined;
+  isDarkColors(): boolean;
+  getAPIVersion(): string;
+  getAppVersion(): string;
+  getNativeId(): string;
+  fetchUserServerToken(): Promise<{ token: string; userId: string; pluginId: string }>;
+  redirect(label: string | string[], payload?: string | UtoolsCommandPayload): Promise<{ ok: boolean }>;
+  simulateKeyboardTap(key: string, ...modifiers: string[]): void;
+  createBrowserWindow(url: string, options?: Record<string, unknown>, callback?: (win: BrowserWindowHandle) => void): BrowserWindowHandle | null;
+  sendToParent(channel: string, ...data: unknown[]): boolean;
+}
+
+export interface BrowserWindowHandle {
+  id: number;
+  send(channel: string, ...data: unknown[]): void;
+}
+
+/** uTools 插件可直接复用的全局类型声明。 */
+declare global {
+  interface Window {
+    bk?: BKApi;
+    utools?: UtoolsApi;
+  }
+}
+
 /** BoxKit 插件 API 类型定义。插件运行环境通过沙箱 preload 暴露 `window.bk`。 */
 
 export interface PluginEnterArgs {

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { safeParseManifest, type PluginManifest } from "@boxkit/shared";
+import { safeParseManifest, isSafePluginPath, type PluginManifest } from "@boxkit/shared";
 import { pluginsDir, stagingDir } from "../core/paths.js";
 import { logger } from "../core/logger.js";
 
@@ -27,6 +27,40 @@ function readManifest(dir: string): PluginManifest | null {
     return parsed.manifest;
   } catch {
     return null;
+  }
+}
+
+function within(root: string, resource: string): string {
+  if (!isSafePluginPath(resource)) throw new Error(`资源路径不安全: ${resource}`);
+  const full = path.resolve(root, resource);
+  const base = path.resolve(root);
+  if (full !== base && !full.startsWith(base + path.sep)) {
+    throw new Error(`资源路径越过插件根目录: ${resource}`);
+  }
+  return full;
+}
+
+/** 在交给平台解压器前检查 zip central directory，防止 zip-slip。 */
+function validateZipEntries(src: string): void {
+  const data = fs.readFileSync(src);
+  const eocd = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+  const end = data.lastIndexOf(eocd);
+  if (end < 0 || end + 22 > data.length) throw new Error("插件包不是有效的 zip 文件");
+  const count = data.readUInt16LE(end + 10);
+  const offset = data.readUInt32LE(end + 16);
+  const cd = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+  let pos = offset;
+  for (let i = 0; i < count; i++) {
+    if (pos + 46 > data.length || data.subarray(pos, pos + 4).compare(cd) !== 0) {
+      throw new Error("插件包目录损坏");
+    }
+    const nameLen = data.readUInt16LE(pos + 28);
+    const extraLen = data.readUInt16LE(pos + 30);
+    const commentLen = data.readUInt16LE(pos + 32);
+    const rawName = data.subarray(pos + 46, pos + 46 + nameLen).toString("utf8");
+    const name = rawName.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (name && !isSafePluginPath(name)) throw new Error(`插件包包含不安全路径: ${rawName}`);
+    pos += 46 + nameLen + extraLen + commentLen;
   }
 }
 
@@ -57,6 +91,7 @@ export function logoToDataUrl(file: string | undefined): string | undefined {
 /** 跨平台解压 zip/.bkx（.bkx 即 zip 包） */
 async function extractArchive(src: string, dest: string): Promise<void> {
   fs.mkdirSync(dest, { recursive: true });
+  validateZipEntries(src);
   if (process.platform === "win32") {
     // Win10 内置 tar 的 zip 支持实测不可靠 → 用 PowerShell Expand-Archive（要求 .zip 后缀）
     const zipCopy = path.join(dest, "__pkg.zip");
@@ -84,72 +119,68 @@ export async function stageInstall(
   filePath: string,
   installedVersions: Map<string, string>,
 ): Promise<StagedPlugin> {
-  if (!/\.(bkx|zip)$/i.test(filePath)) {
-    throw new Error("仅支持 .bkx / .zip 插件包");
+  if (!/\.(bkx|zip|upx)$/i.test(filePath)) {
+    throw new Error("仅支持 .bkx / .zip / .upx 插件包");
   }
   const stagingId = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const tmpExtract = path.join(stagingDir(), stagingId, "__raw__");
-  await extractArchive(filePath, tmpExtract);
-
-  // 定位清单：包根目录 或 唯一子目录
-  let root = tmpExtract;
-  if (!readManifest(root)) {
-    const children = fs
-      .readdirSync(tmpExtract, { withFileTypes: true })
-      .filter((d) => d.isDirectory());
-    const candidates = children.map((c) => path.join(tmpExtract, c.name)).filter(readManifest);
-    if (candidates.length !== 1) {
-      throw new Error(
-        candidates.length === 0
-          ? "插件包中未找到有效的 plugin.json"
-          : "插件包中存在多个含 plugin.json 的目录，无法定位",
-      );
-    }
-    root = candidates[0];
-  }
-  const manifest = readManifest(root);
-  if (!manifest) throw new Error("plugin.json 校验失败");
-  if (manifest.preload && !fs.existsSync(path.join(root, manifest.preload))) {
-    throw new Error(`清单声明了 preload(${manifest.preload}) 但文件不存在`);
-  }
-  if (!fs.existsSync(path.join(root, manifest.main))) {
-    throw new Error(`入口文件 ${manifest.main} 不存在`);
-  }
-
-  // 归一化：把插件根目录内容移到 staging/<id>/ 下
-  // Windows 上新写入目录可能被杀毒/索引短暂锁定 → rename 失败时退避重试，仍失败退化为递归复制
+  const tmpRoot = path.join(stagingDir(), `${stagingId}.tmp`);
+  const tmpExtract = path.join(tmpRoot, "__raw__");
   const finalDir = path.join(stagingDir(), stagingId);
-  let moved = false;
-  for (let attempt = 0; attempt < 5 && !moved; attempt++) {
-    try {
-      fs.renameSync(root, finalDir);
-      moved = true;
-    } catch {
-      const delay = 200 * (attempt + 1);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+  try {
+    await extractArchive(filePath, tmpExtract);
+
+    // 定位清单：包根目录或唯一子目录
+    let root = tmpExtract;
+    if (!readManifest(root)) {
+      const children = fs
+        .readdirSync(tmpExtract, { withFileTypes: true })
+        .filter((d) => d.isDirectory());
+      const candidates = children.map((c) => path.join(tmpExtract, c.name)).filter(readManifest);
+      if (candidates.length !== 1) {
+        throw new Error(
+          candidates.length === 0
+            ? "插件包中未找到有效的 plugin.json"
+            : "插件包中存在多个含 plugin.json 的目录，无法定位",
+        );
+      }
+      root = candidates[0];
     }
-  }
-  if (!moved) {
+
+    const manifest = readManifest(root);
+    if (!manifest) throw new Error("plugin.json 校验失败");
+    const mainPath = within(root, manifest.main);
+    if (!fs.existsSync(mainPath)) throw new Error(`入口文件 ${manifest.main} 不存在`);
+    if (manifest.preload && !fs.existsSync(within(root, manifest.preload))) {
+      throw new Error(`清单声明了 preload(${manifest.preload}) 但文件不存在`);
+    }
+    if (manifest.logo) within(root, manifest.logo);
+
+    // 只把已校验的插件根复制到正式 staging 目录，避免临时目录和 __raw__ 混入安装包。
+    fs.rmSync(finalDir, { recursive: true, force: true });
+    fs.mkdirSync(finalDir, { recursive: true });
     fs.cpSync(root, finalDir, { recursive: true });
-    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+
+    const installed = installedVersions.get(manifest.name);
+    const conflict =
+      installed === undefined
+        ? "none"
+        : installed === manifest.version
+          ? "same-version"
+          : "upgrade";
+
+    return {
+      stagingId,
+      dir: finalDir,
+      manifest,
+      logoDataUrl: logoToDataUrl(manifest.logo ? within(finalDir, manifest.logo) : undefined),
+      conflict,
+    };
+  } catch (error) {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(finalDir, { recursive: true, force: true });
+    throw error;
   }
-  fs.rmSync(tmpExtract, { recursive: true, force: true });
-
-  const installed = installedVersions.get(manifest.name);
-  const conflict =
-    installed === undefined
-      ? "none"
-      : installed === manifest.version
-        ? "same-version"
-        : "upgrade";
-
-  return {
-    stagingId,
-    dir: finalDir,
-    manifest,
-    logoDataUrl: logoToDataUrl(manifest.logo ? path.join(finalDir, manifest.logo) : undefined),
-    conflict,
-  };
 }
 
 /** 用户确认后：把暂存目录正式落入 plugins/ */

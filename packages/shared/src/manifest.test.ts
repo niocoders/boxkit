@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseManifest, safeParseManifest, ManifestError } from "./manifest.js";
+import { parseManifest, safeParseManifest, ManifestError, isSafePluginPath } from "./manifest.js";
 
 const valid = {
   name: "demo-plugin",
@@ -80,6 +80,21 @@ describe("plugin.json 清单校验", () => {
     expect(r.ok).toBe(false);
   });
 
+  it("拒绝插件资源绝对路径和路径穿越", () => {
+    expect(isSafePluginPath("index.html")).toBe(true);
+    expect(isSafePluginPath("ui/main.js")).toBe(true);
+    expect(isSafePluginPath("../outside.js")).toBe(false);
+    expect(isSafePluginPath("C:\\outside.js")).toBe(false);
+    expect(safeParseManifest({ ...valid, main: "../outside.html" }).ok).toBe(false);
+  });
+
+  it("允许 uTools 非 regex 命令没有 match", () => {
+    const r = safeParseManifest({
+      ...valid,
+      features: [{ code: "files", explain: "文件", cmds: [{ type: "files", label: "文件" }] }],
+    });
+    expect(r.ok).toBe(true);
+  });
   it("ManifestError 携带 issue 描述", () => {
     try {
       parseManifest({ name: "x" });

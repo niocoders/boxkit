@@ -54,7 +54,7 @@ function toAbsolute(base: string, u: string | undefined): string {
   return new URL(u.replace(/^\/+/, ""), `${base.replace(/\/+$/, "")}/`).href;
 }
 
-/** 拉取市场清单（tools/build-market.mjs 生成，GitHub Pages 托管） */
+/** 拉取市场清单（公开仓 boxkit-market Pages 生成，客户端只读消费） */
 async function fetchManifest(base: string): Promise<MarketPlugin[]> {
   const res = await fetchWithTimeout(`${base.replace(/\/+$/, "")}/manifest.json`, {
     headers: { "cache-control": "no-cache" },
@@ -125,17 +125,21 @@ export const marketService = {
       }
       const tmp = path.join(os.tmpdir(), `boxkit-market-${pluginId}-${Date.now()}.bkx`);
       fs.writeFileSync(tmp, buf);
-      const staged = await stageInstall(tmp, pluginManager.installedVersions());
-      const preview: InstallPreview = {
-        stagingId: staged.stagingId,
-        name: staged.manifest.name,
-        displayName: staged.manifest.displayName,
-        version: staged.manifest.version,
-        description: staged.manifest.description,
-        permissions: [...staged.manifest.permissions],
-        logo: staged.logoDataUrl,
-      };
-      return { preview, conflict: staged.conflict };
+      try {
+        const staged = await stageInstall(tmp, pluginManager.installedVersions());
+        const preview: InstallPreview = {
+          stagingId: staged.stagingId,
+          name: staged.manifest.name,
+          displayName: staged.manifest.displayName,
+          version: staged.manifest.version,
+          description: staged.manifest.description,
+          permissions: [...staged.manifest.permissions],
+          logo: staged.logoDataUrl,
+        };
+        return { preview, conflict: staged.conflict };
+      } finally {
+        fs.rmSync(tmp, { force: true });
+      }
     } catch (e) {
       logger.warn("market", "市场插件下载/暂存失败", e);
       return { error: "下载或校验失败，请稍后重试" };

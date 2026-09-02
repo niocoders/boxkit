@@ -20,6 +20,7 @@ export function App() {
   const [tab, setTab] = useState<Tab>("general");
   const [pluginView, setPluginView] = useState<"installed" | "market">("installed");
   const [toast, setToast] = useState<string | null>(null);
+  const [protocolPreview, setProtocolPreview] = useState<{ preview: InstallPreview; conflict: string } | null>(null);
 
   useEffect(() => {
     return boxkit.onSettingsShowTab((p) => {
@@ -29,6 +30,14 @@ export function App() {
       } else if (p.tab === "general" || p.tab === "about") {
         setTab(p.tab);
       }
+    });
+  }, []);
+
+  useEffect(() => {
+    return boxkit.onInstallPreview((p) => {
+      setTab("plugins");
+      setPluginView("installed");
+      setProtocolPreview(p);
     });
   }, []);
 
@@ -57,7 +66,13 @@ export function App() {
       <div className="content">
         {tab === "general" && <GeneralView showToast={showToast} />}
         {tab === "plugins" && (
-          <PluginsView showToast={showToast} view={pluginView} onViewChange={setPluginView} />
+          <PluginsView
+            showToast={showToast}
+            view={pluginView}
+            onViewChange={setPluginView}
+            initialPreview={protocolPreview}
+            onInitialPreviewConsumed={() => setProtocolPreview(null)}
+          />
         )}
         {tab === "about" && <AboutView />}
       </div>
@@ -334,10 +349,14 @@ function PluginsView({
   showToast,
   view,
   onViewChange,
+  initialPreview,
+  onInitialPreviewConsumed,
 }: {
   showToast: (m: string) => void;
   view: "installed" | "market";
   onViewChange: (v: "installed" | "market") => void;
+  initialPreview: { preview: InstallPreview; conflict: string } | null;
+  onInitialPreviewConsumed: () => void;
 }) {
   const [items, setItems] = useState<PluginListItem[] | null>(null);
   const [pending, setPending] = useState<{ preview: InstallPreview; conflict: string } | null>(null);
@@ -347,6 +366,13 @@ function PluginsView({
   useEffect(() => {
     reload();
   }, []);
+
+  useEffect(() => {
+    if (initialPreview) {
+      setPending(initialPreview);
+      onInitialPreviewConsumed();
+    }
+  }, [initialPreview, onInitialPreviewConsumed]);
 
   if (items === null) return <div className="loading">加载中…</div>;
 
@@ -382,7 +408,7 @@ function PluginsView({
                 if (r) setPending(r);
               }}
             >
-              安装插件包 (.bkx)
+              安装插件包 (.bkx / .upx / .zip)
             </button>
             <button
               className="btn"

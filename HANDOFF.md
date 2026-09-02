@@ -1,34 +1,43 @@
 # BoxKit 交接文档（换机继续开发必读）
 
-> 更新时间：2026-08-31（第四次更新：**后台移除 → 纯客户端 + GitHub Pages 静态插件市场**）
-> 项目路径：`boxkit/`（pnpm monorepo，**纯客户端项目，无自建服务端**）
-> 现状：**客户端已对标 uTools**（固定面板/高亮/频率排序/最近使用/副命令/快捷键录制/插件市场），**插件市场为 GitHub Pages 静态市场**（plugins/ 源码 → CI 打包 .bkx + manifest → Pages 门户 + 客户端消费），**GitHub CI 三端已打通**（私有仓 niocoders/boxkit）。
+> 更新时间：2026-09-02（第五次更新：**主程序/插件独立仓 + uTools 兼容运行时**）
+> 主程序仓库：`niocoders/boxkit`（pnpm monorepo，纯客户端，不自建服务端，不内置插件源码）
+> 插件/官网/文档仓库：`niocoders/boxkit-market`（公开仓，GitHub Pages：<https://niocoders.github.io/boxkit-market/>）
+> 当前方向：兼容优先。插件保留 uTools 的 Node/preload 运行模型，安装即信任；主程序对宿主 IPC、路径、插件/子窗口 owner 做校验。
 
 ---
 
-## 〇、2026-08-31 市场静态化（本节最新）
+## 〇、2026-09-02 插件独立化与 uTools 兼容（本节最新）
 
-**决策：干掉 Spring Boot 后台（原 `server/` 已整体删除，连同误提交的 target 产物），市场改为「插件放 GitHub 仓库 + Pages 静态站点」的纯客户端架构。**
+**架构决策：插件、官网、开发文档、`.bkx/.upx` 发行包全部托管在公开仓 `niocoders/boxkit-market`；主程序仓只保留客户端、安装器和插件运行时。**
 
 | 事项 | 结果 |
 |---|---|
-| 删除 `server/`（SpringBoot 2.7 + MP + Sa-Token + MySQL 全部，含 static 双 Web 端与 storage .bkx）；结束本机残留的 2 个 market-server java 进程 | ✅ |
-| 新增 `tools/build-market.mjs`（零依赖）：扫描 `plugins/*` → uTools 清单归一化校验 → **纯 Node 打包 stored zip**（.bkx，含 UTF-8 flag/CRC32/central directory）→ 复制 logo → 生成 `market/manifest.json`（fileUrl/logoUrl 相对路径 + fileSize + **sha256** + keywords 汇总）；`pnpm market` | ✅ Expand-Archive 与 unzip 双端解压验证 + 内容 diff 一致 |
-| 新增 `market/index.html` 静态门户（原 server 用户端门户的继任）：fetch manifest.json 本地搜索、卡片浏览、「导入到 BoxKit」（boxkit-market:// 协议）、「下载 .bkx」 | ✅ |
-| 客户端 `services/market.ts` 重写：数据源 = `${marketUrl}/manifest.json`（默认 `https://niocoders.github.io/boxkit-market`），keyword 客户端本地过滤，相对路径转绝对 URL，**下载后 sha256 校验**再走 stageInstall；shared MarketPlugin 类型清理（删 downloads/filePath/latestVersion，加 sha256/keywords）；设置卡片「N 次安装」改为「包大小」 | ✅ typecheck 干净 22/22 测试通过 |
-| 新增 `.github/workflows/pages.yml`：push（plugins/**, market/**, tools/build-market.mjs）或手动触发 → build-market.mjs → deploy-pages 部署 `market/`；生成物（manifest.json/plugins/logo）已 gitignore，**门户 index.html 入库** | ✅ 需仓库 Settings → Pages → Source 选「GitHub Actions」启用 |
-| 端到端模拟验证（本地 http 托管 market/）：清单加载 → 关键字搜索 → 下载比对大小/zip 头/sha256 → 门户协议按钮，全通过 | ✅ |
+| 公开插件仓迁移：`plugins/clipboard-history`、`devtoolbox`、`utools-demo`、模板 → `boxkit-market` 的 `plugins/`、`template/`；公开仓独立 CI/Pages 发布 | ✅ commit `76a0975e31329bd4f182ee5d43a2049bf3de6208`，Pages workflow/build/deploy 成功 |
+| 公开仓市场构建器：固定 ZIP 时间戳、完整清单/路径/权限校验、`.bkx` 生成到 `site/`、连续构建 sha256 一致 | ✅ <https://niocoders.github.io/boxkit-market/> |
+| 主程序去内置插件：删除根 `plugins/`、`market/`、`tools/build-market.mjs`、主仓跨仓 Pages workflow；移除 `pnpm` 的 `plugins/*` workspace、electron-builder `extraResources: ../../plugins`、`PluginManager.seedOfficialPlugins()`；零插件启动合法 | ✅ 桌面包不再依赖主仓插件源码 |
+| 安装边界：支持 `.bkx/.zip/.upx`；central directory 先验 zip-slip；`main/preload/logo` 必须是根内安全相对路径；失败清理临时目录；市场下载临时包 finally 删除 | ✅ |
+| uTools 清单：保留 `pluginName/platform/homepage/pluginSetting` 和 feature/cmd 扩展字段；`minNum → minLength`；平台过滤；SDK 增加 `UtoolsApi`/`window.utools` 类型 | ✅ |
+| uTools 运行时：保留 `nodeIntegration:true/contextIsolation:false` 兼容模型；补齐 DB 文档同步 handler、通知、shell、窗口/显示器、对话框、同步剪贴板、子窗口同步创建；补 sender/permission/owner 校验；协议事件接线 | ✅ 主程序 typecheck + 25 tests 通过 |
+| 安装与协议：本地文件、市场、`boxkit-market://install/<id>` 都进入统一暂存/预览/权限确认；协议接入 `open-url`、`second-instance`、冷启动 argv；不再协议直装 | ✅ |
 
-**架构链路**：`plugins/` 源码（入库）→ push → CI `pages.yml` 打包部署 → GitHub Pages（门户 + manifest.json + .bkx）→ 用户浏览器门户（一键导入/下载）+ 客户端市场页（拉清单/sha256 校验/安装确认）。
+**独立仓发布流程**：在 `boxkit-market/plugins/<id>/` 改插件并 bump `plugin.json.version` → push → 公开仓 CI 校验/打包 `site/manifest.json` + `.bkx` → Pages 更新。主程序只在运行时从市场或本地包安装。
 
-**注意**：私有仓需 GitHub Pro 才能开 Pages；不想公开市场时把客户端「市场地址」指向任意静态托管即可（设置可改，本地联调 `pnpm market` + `npx serve market`）。
+**当前兼容口径**：常见 uTools 静态插件（`plugin.json` + HTML/JS/CSS + preload.js）可以保留原清单和 preload 运行；依赖 uTools 账号、云端同步、`ubrowser`/云端 API、私有后端的能力不伪造成功，需按兼容矩阵处理。Node 同构意味着安装插件即信任，manifest 权限弹窗只约束宿主 API。
 
-**新踩坑（接上轮编号）**：
+**本轮关键修复**：uTools 协议事件不再只是定义未接线；`.bkx` 双击不再要求用户再次手选；插件卸载/开发目录移除不会先误删开发数据；同名视图和子窗口不会跨插件发送 IPC；市场包下载临时文件会清理。
 
-28. **server/target 曾被误提交进 git**（.gitignore 加晚了）；删除时 jar 被本机 java 进程占用 `rm` 报 Device busy → 先 `taskkill` market-server 进程再删。
-29. **纯 Node 打 stored zip 要点**：local header flags 置 0x0800（UTF-8 文件名）、method 0、CRC32 自实现（标准表）；PowerShell Expand-Archive / unzip / ditto 均可解。无需目录条目（包根直接放文件，客户端 staging 支持根或唯一子目录两种布局）。
-30. 静态市场相对路径设计：manifest 里的 fileUrl/logoUrl 是**相对清单的路径**，客户端统一 `new URL(rel, base + "/")` 转绝对 —— 换市场地址零成本。
-31. manifest 是「清单内容寻址」（含 sha256），改插件必须 bump version 才会产出新 .bkx 文件名，否则同文件名覆盖但 Pages CDN 可能有缓存（门户 fetch 已带 no-cache）。
+---
+
+## 〇.1、历史进展（2026-08-30 uTools 对标）
+
+| 事项 | 结果 |
+|---|---|
+| 面板 UX：固定面板、关键字高亮、使用频率排序、最近使用、副命令展开 | ✅ |
+| 快捷键录制控件和插件市场客户端 | ✅ |
+| 三端 CI / release 流水线 | ✅ |
+
+**历史踩坑**：早期 Spring Boot 市场后台已删除；旧的服务端 API、数据库和内置官方插件描述均不再适用。
 
 ## 〇.1、2026-08-30 uTools 对标进展
 
@@ -62,15 +71,15 @@
 | 插件 SDK 类型 `packages/sdk`（`window.bk` 全量类型） | ✅ | 编译通过 |
 | 主进程（单实例 / 托盘 / 全局快捷键 / 配置存储 / 日志） | ✅ | 冒烟 + 实际运行 |
 | 搜索系统（macOS 应用扫描 75 个、系统命令、评分排序、网络搜索兜底） | ✅ | 单测 + 实际运行 |
-| 插件系统（清单校验 / .bkx 安装暂存 / 权限确认弹窗 / 沙箱 WebContentsView / `bk-plugin://` 协议 / 开发目录热重载 / 官方插件 seed） | ✅ | 实际运行中插件打开→退出成功 |
-| 官方插件 ×2（剪贴板历史、DevToolbox 时间戳/JSON/UUID，含子输入框接管演示） | ✅ | 已随包 seed 并运行 |
-| 插件模板 `packages/plugin-template` | ✅ | 文件就绪 |
+| 插件系统（清单校验 / .bkx/.upx 安装暂存 / 权限确认弹窗 / uTools 兼容 WebContentsView / `bk-plugin://` 协议 / 开发目录热重载） | ✅ | 零插件可启动，插件从本地包/公开市场安装 |
+| 官方插件/模板 | → 已迁移至公开仓 `niocoders/boxkit-market` | 主仓不内置，市场 Pages 在线 |
+| 插件模板 | → 公开仓 `template/` | 独立仓维护 |
 | 授权系统（Ed25519 离线验签 / 试用期 14 天 / 设备绑定 / safeStorage 存储 / 设置页激活 UI） | ✅ | 25 个单测含 **CLI 签发↔客户端验签互操作** |
 | License CLI（`tools/license-cli`，零依赖：keygen/issue/verify/show） | ✅ | 单测调用验证 |
 | 自动更新（electron-updater 接线 + 本地更新服务器示例 `tools/update-server`） | ⚠️ 代码就绪，**端到端未测** | — |
 | 崩溃上报（Sentry 主进程接入 + 本地 crash 日志兜底，设置页开关） | ⚠️ 代码就绪，无 DSN 未实测 | 启动日志确认降级逻辑正确 |
 | 应用图标 / 托盘模板图标（纯 Node PNG 编码器生成） | ✅ | 文件已生成 |
-| 沙箱 preload（5KB，白名单 API，无 Node 内建依赖） | ✅ | 构建产物确认 |
+| 插件兼容 preload（15KB 级，兼容模式允许 Node） | ✅ | 构建产物确认 |
 
 **测试基线：`pnpm test` → 25/25 通过；`pnpm typecheck` → 干净；`BOXKIT_SMOKE=1` 冒烟输出：**
 ```json
@@ -170,7 +179,7 @@ apps/desktop/src/preload/   # main.ts(主窗桥) / plugin.ts(沙箱桥)
 apps/desktop/src/renderer/  # search(搜索面板) / settings(设置) — React+Vite
 packages/shared/src/        # ipc.ts(通道) / manifest.ts(清单校验) / license.ts(验签) / types.ts
 packages/sdk/src/index.ts   # 插件作者用的 bk API 类型（文档素材）
-plugins/                    # 插件源码（随包 seed 到用户目录；也是市场的发布源，push 即发布）
+plugins/                    # userData 运行时安装目录（主仓不含源码）
 market/                     # 静态插件市场：index.html 门户（入库）+ CI 生成物（manifest/plugins/logo，gitignore）
 tools/                      # license-cli / update-server / build-market.mjs / gen-icons.mjs
 ```

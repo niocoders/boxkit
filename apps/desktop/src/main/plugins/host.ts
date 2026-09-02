@@ -21,12 +21,23 @@ import {
 import { logger } from "../core/logger.js";
 import type { LoadedPlugin } from "./manager.js";
 import type { PluginManager } from "./manager.js";
-import { getMainWindow } from "../windows/mainWindow.js";
+import { getMainWindow, showMainWindow } from "../windows/mainWindow.js";
 import { getMachineId } from "../services/machine-id.js";
 
 const HEADER_HEIGHT = 64;
 const PLUGIN_WIN = { width: 880, height: 640 };
 const SEARCH_WIN = { width: 720, height: 560 };
+
+function safePluginRelative(root: string, value: string): string {
+  const clean = String(value ?? "").replace(/\\/g, "/");
+  if (!clean || clean.startsWith("/") || /^[a-zA-Z]:\//.test(clean) || clean.split("/").includes("..")) {
+    throw new Error("插件路径必须是根目录内的相对路径");
+  }
+  const full = path.resolve(root, clean);
+  const base = path.resolve(root);
+  if (full !== base && !full.startsWith(base + path.sep)) throw new Error("插件路径越界");
+  return full;
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -69,6 +80,7 @@ export class PluginHost {
   private pendingEnter = new Map<string, EnterPayload>();
   private prePluginSize: { width: number; height: number } | null = null;
   private pendingScreenShot: Buffer | null = null;
+  private childOwners = new Map<number, string>();
   private stateListeners = new Set<(s: PluginModeState) => void>();
 
   constructor(
@@ -156,16 +168,21 @@ export class PluginHost {
     const win = getMainWindow();
     const name = this.currentName;
     const view = this.views.get(name);
-    view?.webContents.send(IPC.pkOutEvent);
-    this.detachCurrent(true);
+    this.detachCurrent(true, false);
     logger.info("plugins", `退出插件 ${name}`);
     if (win) {
       win.webContents.focus();
     }
   }
 
-  private detachCurrent(notifySearch: boolean): void {
+  private detachCurrent(notifySearch: boolean, processExit = true): void {
     const win = getMainWindow();
+    if (this.currentName && win) {
+      const previous = this.views.get(this.currentName);
+      if (processExit) previous?.webContents.send(IPC.pkOutEvent, true);
+      else previous?.webContents.send(IPC.pkOutEvent, false);
+      if (processExit) previous?.webContents.send(IPC.pkDetach);
+    }
     const prev = this.currentName ? this.views.get(this.currentName) : null;
     if (prev && win) win.contentView.removeChildView(prev);
     if (this.currentName && win && this.prePluginSize) {
@@ -315,16 +332,21 @@ export class PluginHost {
 
   destroyView(name: string): void {
     const view = this.views.get(name);
-    if (this.currentName === name) this.detachCurrent(true);
-    // 非附着状态的视图交由 GC 回收；分区存储保留（重开插件不丢数据）
+    if (this.currentName === name) this.detachCurrent(true, true);
     if (view) {
       try {
+        view.webContents.send(IPC.pkOutEvent, true);
+        view.webContents.send(IPC.pkDetach);
         view.webContents.stop();
       } catch {
         /* ignore */
       }
+      this.childOwners.forEach((owner, webContentsId) => {
+        if (owner === name) this.childOwners.delete(webContentsId);
+      });
     }
     this.views.delete(name);
+    this.protocolsReady.delete(name);
     this.pendingEnter.delete(name);
   }
 
@@ -335,24 +357,20 @@ export class PluginHost {
   // ————— 沙箱 IPC（权限校验） —————
 
   private senderPlugin(e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): LoadedPlugin | null {
-    const name = this.currentName;
-    if (!name) return null;
-    const view = this.views.get(name);
-    if (view && !view.webContents.isDestroyed() && view.webContents.id === e.sender.id) {
-      return this.manager.get(name);
-    }
-    // 兜底：遍历缓存视图
     for (const [n, v] of this.views) {
       if (!v.webContents.isDestroyed() && v.webContents.id === e.sender.id) {
         return this.manager.get(n);
       }
     }
-    return null;
+    const owner = this.childOwners.get(e.sender.id);
+    return owner ? this.manager.get(owner) : null;
   }
 
   private requirePermission(p: LoadedPlugin | null, perm: PluginPermission): LoadedPlugin {
     if (!p) throw new Error("不在有效的插件环境中");
-    if (!p.manifest.permissions.includes(perm)) {
+    // 原生 uTools 清单通常没有 BoxKit permissions 字段；兼容模式按 uTools 的安装信任模型放行。
+    const legacyUtools = p.manifest.pluginName !== undefined && p.manifest.permissions.length === 0;
+    if (!legacyUtools && !p.manifest.permissions.includes(perm)) {
       throw new Error(`插件未声明权限: ${perm}`);
     }
     return p;
@@ -371,34 +389,160 @@ export class PluginHost {
       };
     });
 
-    ipcMain.on(IPC.pkOut, () => this.outPlugin());
+    ipcMain.on(IPC.pkOut, (e) => {
+      if (this.senderPlugin(e)) this.outPlugin();
+    });
 
-    ipcMain.on(IPC.pkSubInputSet, (_e, args: { placeholder?: string; isFocus?: boolean }) => {
+    ipcMain.on(IPC.pkSubInputSet, (e, args: { placeholder?: string; isFocus?: boolean }) => {
+      this.requirePermission(this.senderPlugin(e), "window");
       this.setSubInput(args?.placeholder ?? "", !!args?.isFocus);
     });
-    ipcMain.on(IPC.pkSubInputRemove, () => this.setSubInput("", false));
+    ipcMain.on(IPC.pkSubInputRemove, (e) => {
+      this.requirePermission(this.senderPlugin(e), "window");
+      this.setSubInput("", false);
+    });
+    ipcMain.on(IPC.pkSubInputValue, (e, value: unknown) => {
+      this.requirePermission(this.senderPlugin(e), "window");
+      getMainWindow()?.webContents.send(IPC.searchSetInput, String(value ?? ""));
+    });
+    ipcMain.on(IPC.pkSubInputFocus, (e) => {
+      this.requirePermission(this.senderPlugin(e), "window");
+      getMainWindow()?.webContents.send(IPC.searchInputFocus, "focus");
+    });
+    ipcMain.on(IPC.pkSubInputSelect, (e) => {
+      this.requirePermission(this.senderPlugin(e), "window");
+      getMainWindow()?.webContents.send(IPC.searchInputSelect, "select");
+    });
+    ipcMain.on(IPC.pkSubInputBlur, (e) => {
+      this.requirePermission(this.senderPlugin(e), "window");
+      getMainWindow()?.webContents.send(IPC.searchInputBlur, "blur");
+    });
 
     ipcMain.handle(IPC.pkDbGet, (e, key: string) => {
-      const p = this.senderPlugin(e);
-      if (!p) throw new Error("不在有效的插件环境中");
+      const p = this.requirePermission(this.senderPlugin(e), "db");
       return this.manager.db(p.manifest.name).get(String(key));
     });
     ipcMain.handle(IPC.pkDbPut, (e, key: string, value: unknown) => {
-      const p = this.senderPlugin(e);
-      if (!p) throw new Error("不在有效的插件环境中");
+      const p = this.requirePermission(this.senderPlugin(e), "db");
       this.manager.db(p.manifest.name).put(String(key), value);
     });
     ipcMain.handle(IPC.pkDbRemove, (e, key: string) => {
-      const p = this.senderPlugin(e);
-      if (!p) throw new Error("不在有效的插件环境中");
+      const p = this.requirePermission(this.senderPlugin(e), "db");
       this.manager.db(p.manifest.name).remove(String(key));
     });
     ipcMain.handle(IPC.pkDbAll, (e) => {
-      const p = this.senderPlugin(e);
-      if (!p) throw new Error("不在有效的插件环境中");
+      const p = this.requirePermission(this.senderPlugin(e), "db");
       return this.manager.db(p.manifest.name).all();
     });
 
+    // uTools 文档 DB：同步 API，保留文档字段并提供轻量 _rev 冲突检测。
+    ipcMain.on(IPC.pkDbDocGet, (e, key: string) => {
+      const p = this.requirePermission(this.senderPlugin(e), "db");
+      e.returnValue = this.manager.db(p.manifest.name).get(String(key));
+    });
+    ipcMain.on(IPC.pkDbDocPut, (e, key: string, rawDoc: unknown) => {
+      const p = this.requirePermission(this.senderPlugin(e), "db");
+      const id = String(key ?? "").replace(/^_doc:/, "");
+      if (!id || !rawDoc || typeof rawDoc !== "object") {
+        e.returnValue = { ok: false, error: "文档必须包含 _id" };
+        return;
+      }
+      const doc = { ...(rawDoc as Record<string, unknown>), _id: id } as Record<string, unknown> & { _id: string; _rev?: string };
+      const store = this.manager.db(p.manifest.name);
+      const current = store.get(`_doc:${id}`) as { _rev?: string } | null;
+      const requestedRev = typeof doc._rev === "string" ? doc._rev : undefined;
+      if (current?._rev && requestedRev && requestedRev !== current._rev) {
+        e.returnValue = { ok: false, error: "文档版本冲突" };
+        return;
+      }
+      const rev = crypto.createHash("sha1").update(`${id}:${Date.now()}:${Math.random()}`).digest("hex").slice(0, 12);
+      const saved = { ...doc, _rev: rev };
+      store.put(`_doc:${id}`, saved);
+      e.returnValue = { ok: true, id, rev };
+    });
+    ipcMain.on(IPC.pkDbDocRemove, (e, key: string, rawDoc: unknown) => {
+      const p = this.requirePermission(this.senderPlugin(e), "db");
+      const id = String(key ?? "").replace(/^_doc:/, "");
+      const store = this.manager.db(p.manifest.name);
+      const current = store.get(`_doc:${id}`) as { _rev?: string } | null;
+      const requestedRev = rawDoc && typeof rawDoc === "object" && typeof (rawDoc as { _rev?: unknown })._rev === "string"
+        ? (rawDoc as { _rev: string })._rev
+        : undefined;
+      if (current?._rev && requestedRev && requestedRev !== current._rev) {
+        e.returnValue = { ok: false, error: "文档版本冲突" };
+        return;
+      }
+      store.remove(`_doc:${id}`);
+      e.returnValue = { ok: true };
+    });
+    ipcMain.on(IPC.pkDbDocAll, (e) => {
+      const p = this.requirePermission(this.senderPlugin(e), "db");
+      e.returnValue = this.manager.db(p.manifest.name).all()
+        .filter((item) => item.key.startsWith("_doc:"))
+        .map((item) => item.value);
+    });
+
+    ipcMain.on(IPC.pkNotify, (e, body: unknown) => {
+      const p = this.requirePermission(this.senderPlugin(e), "notify");
+      new Notification({ title: p.manifest.displayName, body: String(body ?? "") }).show();
+    });
+    ipcMain.handle(IPC.pkOpenExternal, async (e, url: unknown) => {
+      this.requirePermission(this.senderPlugin(e), "shell");
+      const value = String(url ?? "");
+      if (!/^https?:\/\//i.test(value)) throw new Error("仅允许打开 http(s) 外部链接");
+      await shell.openExternal(value);
+    });
+    ipcMain.handle(IPC.pkOpenPath, async (e, target: unknown) => {
+      this.requirePermission(this.senderPlugin(e), "shell");
+      return shell.openPath(String(target ?? ""));
+    });
+    ipcMain.on(IPC.pkHideMain, (e) => {
+      this.requirePermission(this.senderPlugin(e), "window");
+      getMainWindow()?.hide();
+    });
+    ipcMain.on(IPC.pkShowMain, (e) => {
+      this.requirePermission(this.senderPlugin(e), "window");
+      showMainWindow();
+    });
+    ipcMain.on(IPC.pkResize, (e, ratio: unknown) => {
+      this.requirePermission(this.senderPlugin(e), "window");
+      this.setViewHeightRatio(Number(ratio));
+    });
+    ipcMain.on(IPC.pkResizeHeight, (e, height: unknown) => {
+      this.requirePermission(this.senderPlugin(e), "window");
+      const win = getMainWindow();
+      if (win) win.setSize(win.getSize()[0], Math.max(80, Math.min(1600, Math.round(Number(height) || 0))));
+    });
+    ipcMain.handle(IPC.pkDisplaySize, (e) => {
+      this.requirePermission(this.senderPlugin(e), "screen");
+      const d = screen.getPrimaryDisplay();
+      return { width: d.size.width, height: d.size.height };
+    });
+    ipcMain.on(IPC.pkDisplayFull, (e, which: unknown) => {
+      this.requirePermission(this.senderPlugin(e), "screen");
+      const displays = screen.getAllDisplays().map((d) => ({
+        id: String(d.id),
+        bounds: d.bounds,
+        workArea: d.workArea,
+        size: d.size,
+        scaleFactor: d.scaleFactor,
+      }));
+      e.returnValue = which === "all" ? displays : displays.find((d) => d.id === String(screen.getPrimaryDisplay().id)) ?? displays[0];
+    });
+    ipcMain.on(IPC.pkDialogOpenSync, (e, args: { options?: Electron.OpenDialogOptions }) => {
+      const p = this.requirePermission(this.senderPlugin(e), "shell");
+      const parent = getMainWindow();
+      const opts = { ...(args?.options ?? {}), title: args?.options?.title ?? `选择文件（${p.manifest.displayName}）` };
+      const result = parent ? dialog.showOpenDialogSync(parent, opts) : dialog.showOpenDialogSync(opts);
+      e.returnValue = result;
+    });
+    ipcMain.on(IPC.pkDialogSaveSync, (e, args: { options?: Electron.SaveDialogOptions }) => {
+      this.requirePermission(this.senderPlugin(e), "shell");
+      const parent = getMainWindow();
+      const opts = args?.options ?? {};
+      const result = parent ? dialog.showSaveDialogSync(parent, opts) : dialog.showSaveDialogSync(opts);
+      e.returnValue = result;
+    });
     ipcMain.handle(IPC.pkClipboardRead, (e) => {
       this.requirePermission(this.senderPlugin(e), "clipboard");
       return clipboard.readText();
@@ -406,6 +550,22 @@ export class PluginHost {
     ipcMain.handle(IPC.pkClipboardWrite, (e, text: string) => {
       this.requirePermission(this.senderPlugin(e), "clipboard");
       clipboard.writeText(String(text));
+    });
+    ipcMain.on(IPC.pkClipboardWriteSync, (e, text: unknown) => {
+      this.requirePermission(this.senderPlugin(e), "clipboard");
+      clipboard.writeText(String(text ?? ""));
+      e.returnValue = true;
+    });
+    ipcMain.on(IPC.pkClipboardReadSync, (e) => {
+      this.requirePermission(this.senderPlugin(e), "clipboard");
+      e.returnValue = clipboard.readText();
+    });
+
+    ipcMain.on(IPC.pkClipboardWriteImageSync, (e, png: Buffer) => {
+      this.requirePermission(this.senderPlugin(e), "clipboard");
+      const img = nativeImage.createFromBuffer(Buffer.from(png));
+      e.returnValue = !img.isEmpty();
+      if (!img.isEmpty()) (clipboard as unknown as { writeImage(i: Electron.NativeImage): void }).writeImage(img);
     });
 
     // uTools 兼容：剪贴板图片（PNG buffer）
@@ -461,7 +621,8 @@ export class PluginHost {
         overlay.on("closed", () => {
           if (!settled) {
             settled = true;
-            resolve(this.pendingScreenShot ?? Buffer.alloc(0));
+            this.pendingScreenShot = null;
+            resolve(Buffer.alloc(0));
             if (wasVisible) main?.show();
           }
         });
@@ -474,7 +635,8 @@ export class PluginHost {
 
     // ————— uTools 兼容：simulateKeyboardTap —————
     // PowerShell SendKeys 注入组合键（作用于当前焦点窗口）
-    ipcMain.handle(IPC.pkKeyboardTap, async (_e, key: string, modifiers: string[]) => {
+    ipcMain.handle(IPC.pkKeyboardTap, async (e, key: string, modifiers: string[]) => {
+      this.requirePermission(this.senderPlugin(e), "window");
       const mod = Array.isArray(modifiers) ? modifiers.map((m) => String(m).toLowerCase()) : [];
       let seq = "";
       if (mod.includes("ctrl")) seq += "^";
@@ -505,43 +667,105 @@ export class PluginHost {
     // ————— uTools 兼容：createBrowserWindow —————
     const childWindows = new Map<number, BrowserWindow>();
 
+    const createChildWindow = (
+      e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
+      args: { url?: string; options?: { width?: number; height?: number; preload?: string; nodeIntegration?: boolean } },
+    ) => {
+      const p = this.requirePermission(this.senderPlugin(e), "window");
+      if (!args?.url) throw new Error("缺少 url");
+      const rawUrl = String(args.url);
+      const url = rawUrl.startsWith("bk-plugin://")
+        ? (() => {
+            const parsed = new URL(rawUrl);
+            if (parsed.hostname !== p.manifest.name) throw new Error("子窗口 URL 不属于当前插件");
+            safePluginRelative(p.dir, parsed.pathname.replace(/^\/+/, ""));
+            return rawUrl;
+          })()
+        : `bk-plugin://${p.manifest.name}/${String(args.url).replace(/^\/+/, "")}`;
+      const opts = args.options ?? {};
+      const preloadAbs = opts.preload ? safePluginRelative(p.dir, opts.preload) : undefined;
+      if (preloadAbs && !fs.existsSync(preloadAbs)) throw new Error("preload 文件不存在");
+      const win = new BrowserWindow({
+        width: Math.max(320, Math.min(2400, Number(opts.width) || 800)),
+        height: Math.max(200, Math.min(1800, Number(opts.height) || 600)),
+        show: true,
+        autoHideMenuBar: true,
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: false,
+          sandbox: false,
+          preload: this.preloadPath,
+          additionalArguments: [
+            `--boxkit-plugin-preload=${preloadAbs ?? ""}`,
+          ],
+        },
+      });
+      childWindows.set(win.id, win);
+      this.childOwners.set(win.webContents.id, p.manifest.name);
+      win.on("closed", () => {
+        childWindows.delete(win.id);
+        this.childOwners.delete(win.webContents.id);
+      });
+      void win.loadURL(url);
+      return { id: win.id };
+    };
+
+    ipcMain.on(IPC.pkCreateBrowserWindowSync, (e, args) => {
+      try {
+        e.returnValue = createChildWindow(e, args);
+      } catch (error) {
+        e.returnValue = null;
+        logger.warn("plugins", "创建 uTools 子窗口失败", error);
+      }
+    });
+
     ipcMain.handle(
       IPC.pkCreateBrowserWindow,
-      (e, args: { url?: string; options?: { width?: number; height?: number; preload?: string; nodeIntegration?: boolean } }) => {
-        const p = this.requirePermission(this.senderPlugin(e), "window");
-        if (!args?.url) throw new Error("缺少 url");
-        const url = args.url.startsWith("bk-plugin://")
-          ? args.url
-          : `bk-plugin://${p.manifest.name}/${String(args.url).replace(/^\/+/, "")}`;
-        const opts = args.options ?? {};
-        const preloadAbs = opts.preload ? path.join(p.dir, opts.preload) : undefined;
-        if (preloadAbs && !fs.existsSync(preloadAbs)) throw new Error("preload 文件不存在");
-        const win = new BrowserWindow({
-          width: opts.width ?? 800,
-          height: opts.height ?? 600,
-          show: true,
-          autoHideMenuBar: true,
-          webPreferences: {
-            nodeIntegration: opts.nodeIntegration ?? true,
-            contextIsolation: false,
-            preload: preloadAbs,
-          },
-        });
-        childWindows.set(win.id, win);
-        win.on("closed", () => childWindows.delete(win.id));
-        void win.loadURL(url);
-        return { id: win.id };
-      },
+      (e, args: { url?: string; options?: { width?: number; height?: number; preload?: string; nodeIntegration?: boolean } }) =>
+        createChildWindow(e, args),
     );
 
     // 向子窗口 webContents 转发消息（createBrowserWindow 回调句柄的 send 即此通道）
-    ipcMain.on(IPC.pkBwSend, (_e, id: number, channel: string, data: unknown) => {
+    ipcMain.on(IPC.pkBwSend, (e, id: number, channel: string, data: unknown) => {
+      const owner = this.senderPlugin(e);
       const w = childWindows.get(Number(id));
-      w?.webContents.send(String(channel), data);
+      if (!owner || !w || this.childOwners.get(w.webContents.id) !== owner.manifest.name) return;
+      w.webContents.send(String(channel), data);
     });
 
-    // ————— uTools 兼容：redirect（跳转到其他插件/关键字） —————
-    ipcMain.handle(IPC.pkRedirect, (_e, input: { cmd?: string; payload?: string }) => {
+    ipcMain.on(IPC.pkParentSend, (e, channel: string, ...data: unknown[]) => {
+      const owner = this.senderPlugin(e);
+      if (!owner) return;
+      // 主窗口插件页可监听自定义事件；消息只发送给当前 owner 的视图。
+      const view = this.views.get(owner.manifest.name);
+      if (view && !view.webContents.isDestroyed()) view.webContents.send(String(channel), ...data);
+    });
+
+    ipcMain.on(IPC.pkRedirectSync, (e, input: { cmd?: string; payload?: unknown }) => {
+      const owner = this.requirePermission(this.senderPlugin(e), "window");
+      const cmd = String(input?.cmd ?? "").trim();
+      if (!cmd) {
+        e.returnValue = false;
+        return;
+      }
+      const feature = this.manager
+        .enabledPlugins()
+        .flatMap((p) => p.manifest.features.map((f) => ({ p, f })))
+        .find(({ f }) => f.cmds.some((c) => (typeof c === "string" ? c : c.label ?? c.explain ?? f.explain) === cmd));
+      if (!feature) {
+        this.toast(`未找到功能：${cmd}`);
+        e.returnValue = false;
+        return;
+      }
+      const rawPayload = input?.payload;
+      const payload = typeof rawPayload === "string" ? rawPayload : JSON.stringify(rawPayload ?? cmd);
+      this.openPlugin(feature.p, { code: feature.f.code, type: "over", payload });
+      e.returnValue = owner.manifest.name !== "";
+    });
+
+    // BoxKit 旧对象形状仍保留给已有插件。
+    ipcMain.handle(IPC.pkRedirect, (e, input: { cmd?: string; payload?: string }) => {
+      this.requirePermission(this.senderPlugin(e), "window");
       const cmd = String(input?.cmd ?? "").trim();
       const payload = String(input?.payload ?? "");
       if (!cmd) throw new Error("redirect 缺少 cmd");
@@ -573,6 +797,7 @@ export class PluginHost {
 
     // ————— uTools 兼容：screenCapture 区域裁剪（overlay 选区回传） —————
     ipcMain.on(IPC.pkScreenCaptureRegion, (e, rect: { x: number; y: number; width: number; height: number }) => {
+      this.requirePermission(this.senderPlugin(e), "screen");
       e.returnValue = this.resolveScreenCaptureRegion(rect);
     });
   }

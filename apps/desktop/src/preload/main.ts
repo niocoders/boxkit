@@ -13,6 +13,20 @@ const api = {
   hide: () => ipcRenderer.send(IPC.searchHide),
   openSettings: () => ipcRenderer.send(IPC.uiOpenSettings),
   sendInput: (text: string) => ipcRenderer.send(IPC.searchInput, text),
+  onInputCommand: (cb: (command: string, value?: unknown) => void) => {
+    const bind = (channel: string) => {
+      const l = (_unknown: unknown, value?: unknown) => cb(channel, value);
+      ipcRenderer.on(channel, l);
+      return () => ipcRenderer.removeListener(channel, l);
+    };
+    const offs = [
+      bind(IPC.searchSetInput),
+      bind(IPC.searchInputFocus),
+      bind(IPC.searchInputSelect),
+      bind(IPC.searchInputBlur),
+    ];
+    return () => offs.forEach((off) => off());
+  },
   exitPlugin: () => ipcRenderer.send(IPC.pluginExit),
   onPluginState: (cb: (s: unknown) => void) => {
     const l = (_: unknown, s: unknown) => cb(s);
@@ -30,9 +44,14 @@ const api = {
     return () => ipcRenderer.removeListener(IPC.uiToast, l);
   },
   onSettingsShowTab: (cb: (payload: unknown) => void) => {
-    const l = (_: unknown, payload: unknown) => cb(payload);
+    const l = (_unknown: unknown, payload: unknown) => cb(payload);
     ipcRenderer.on(IPC.settingsShowTab, l);
     return () => ipcRenderer.removeListener(IPC.settingsShowTab, l);
+  },
+  onInstallPreview: (cb: (payload: unknown) => void) => {
+    const l = (_unknown: unknown, payload: unknown) => cb(payload);
+    ipcRenderer.on(IPC.settingsInstallPreview, l);
+    return () => ipcRenderer.removeListener(IPC.settingsInstallPreview, l);
   },
 
   // 配置

@@ -1,10 +1,32 @@
 import { BrowserWindow } from "electron";
 import path from "node:path";
+import { IPC } from "@boxkit/shared";
 
 let win: BrowserWindow | null = null;
+let pendingInstallPreview: unknown = null;
 
 export function getSettingsWindow(): BrowserWindow | null {
   return win && !win.isDestroyed() ? win : null;
+}
+
+function flushInstallPreview(): void {
+  const target = getSettingsWindow();
+  if (!target || target.webContents.isLoadingMainFrame() || !pendingInstallPreview) return;
+  target.show();
+  target.focus();
+  target.webContents.send(IPC.settingsInstallPreview, pendingInstallPreview);
+  pendingInstallPreview = null;
+}
+
+/** 将协议导入的待确认安装可靠地投递给设置页。 */
+export function queueInstallPreview(payload: unknown): void {
+  pendingInstallPreview = payload;
+  const target = getSettingsWindow();
+  if (!target) {
+    openSettingsWindow();
+    return;
+  }
+  flushInstallPreview();
 }
 
 export function openSettingsWindow(): void {
@@ -35,6 +57,7 @@ export function openSettingsWindow(): void {
   void (devUrl
     ? win.loadURL(`${devUrl}/settings/index.html`)
     : win.loadFile(path.join(__dirname, "../renderer/settings/index.html")));
+  win.webContents.on("did-finish-load", flushInstallPreview);
   win.once("ready-to-show", () => win?.show());
   win.on("closed", () => {
     win = null;

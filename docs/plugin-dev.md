@@ -1,8 +1,8 @@
 # BoxKit 插件开发指南
 
-BoxKit 插件是一个包含 `plugin.json` 的静态 Web 应用，运行在独立的沙箱 `WebContentsView` 中（`contextIsolation` 开启、无 Node 环境），通过沙箱 preload 暴露的 `window.bk` API 与宿主通信。
+BoxKit 插件是一个与主程序**独立发布**的静态 Web 应用，运行在兼容 uTools 的插件视图中。插件源码、官网、发行包和开发模板统一托管在公开仓 [`niocoders/boxkit-market`](https://github.com/niocoders/boxkit-market)；主程序仓只包含运行时、安装器和客户端市场页。
 
-官方模板：[`packages/plugin-template`](../packages/plugin-template/)，可直接复制后改造。
+官方模板见公开仓的 [`template/`](https://github.com/niocoders/boxkit-market/tree/main/template)，本地开发时通过 BoxKit 设置 → 插件 → 「添加开发目录」加载。
 
 ---
 
@@ -12,12 +12,14 @@ BoxKit 插件是一个包含 `plugin.json` 的静态 Web 应用，运行在独�
 my-plugin/
 ├── plugin.json      # 清单（必需）
 ├── index.html       # 入口页面（默认 main）
-├── preload.js       # 可选：沙箱 preload，在 window.bk 上挂 API
+├── preload.js       # 可选：uTools/BoxKit preload（可使用 Node，兼容模式）
 ├── logo.svg         # 插件 logo（可选）
 └── ...              # 其余静态资源，全部随插件分发
 ```
 
-> ⚠️ preload 必须是单文件纯 JS（不能用 `require`/Node 内建模块）。建议用 esbuild 打成 IIFE：`esbuild preload.ts --bundle --format=iife --outfile=preload.js`。
+> **兼容运行模型**：为兼容现有 uTools 插件，插件视图使用 `nodeIntegration: true`、`contextIsolation: false`。插件可直接使用 Node 和自带 preload；这意味着“安装即信任”，权限弹窗只约束宿主提供的 API，不是 Node 沙箱。
+
+> `preload.js` 可以保留 uTools 原写法，BoxKit 会先挂载 `window.utools`/`window.bk`，再加载插件自带 preload。
 
 ## 2. plugin.json 清单
 
@@ -43,9 +45,11 @@ my-plugin/
 }
 ```
 
-清单由 `@boxkit/shared` 的 zod schema 强校验，字段不合法会在安装/加载时明确报错。
+### uTools 清单兼容
 
-### 关键字（cmds）写法
+BoxKit 保留并归一化 uTools 常见字段：`pluginName`、`description`、`author`、`main`、`preload`、`logo`、`platform`、`version`、`homepage`、`pluginSetting`；`features` 支持 `platform`、`icon`、`mainHide`、`mainPush`；`cmds` 支持字符串以及 `regex/img/files/window/over` 等对象（regex 的 `minNum` 会归一为 `minLength`）。未知描述字段会保留，不参与宿主执行。
+
+插件包扩展名支持 `.bkx`、`.zip`、`.upx`（三者本质都是 zip）。包内必须有 `plugin.json`，入口路径必须是插件根目录内的相对路径，安装器会检查 zip-slip 和入口文件。
 
 - **字符串**：搜索面板输入匹配该关键字即命中（支持拼音包含等评分排序）。
 - **正则匹配器**：适合"把任意输入交给插件处理"的场景，例如让时间戳数字直接唤起：
@@ -146,26 +150,26 @@ cd my-plugin && zip -r ../my-plugin.bkx . -x ".*"
 - 或设置 → 插件 → 「安装插件包」选择文件；
 - 或发布到插件市场让用户一键导入（见下节）。
 
-安装流程：解压到暂存目录 → 展示清单与权限确认 → 用户同意后提交到 `plugins/` 目录。恶意清单（越权字段、路径穿越）在暂存阶段即被拒绝。
+安装流程：解压到暂存目录 → 展示清单与权限确认 → 用户同意后提交到用户 `plugins/` 目录。安装器会拒绝 zip-slip、绝对路径和越过插件根目录的 `main/preload/logo`。
 
 ## 6.1 发布到插件市场（GitHub Pages 静态市场）
 
-官方市场没有服务端——把插件目录提交到仓库 `plugins/` 下并 push，CI 会自动完成发布：
+插件市场、官网和本文档均在公开仓 [`niocoders/boxkit-market`](https://github.com/niocoders/boxkit-market)。主程序仓不保存插件源码，也不需要发布 token。
 
-1. 在 `plugins/` 新建插件目录（含 `plugin.json`，与官方插件结构一致）；
-2. push 到 main 分支 → `pages.yml` 流水线运行 `pnpm market`：
-   - 校验清单（semver 版本号、入口文件、features 等）；
-   - 打包为 `market/plugins/<name>-<version>.bkx`（stored zip，跨三端解压一致）；
-   - 生成 `market/manifest.json`（版本/描述/关键字/sha256）；
-   - 部署 `market/` 到 GitHub Pages。
-3. 用户侧即可在市场门户浏览、在客户端市场页搜索安装（客户端会做 sha256 校验后走标准安装确认）。
+1. 在公开仓 `plugins/<id>/` 新建或修改插件目录（含 `plugin.json`，可保留 uTools 原始字段）；
+2. 更新 `plugin.json` 的 `version` 后 push 到公开仓 main；
+3. 公开仓自己的 Pages workflow 校验清单、固定 ZIP 时间戳打包 `.bkx`，生成 `site/manifest.json`、`site/plugins/*.bkx`、`site/logo/*` 并部署；
+4. 用户从 [市场门户](https://niocoders.github.io/boxkit-market/) 浏览/下载，或在 BoxKit 客户端市场页直接安装。
 
-**升级插件**：改 `plugin.json` 的 `version` 后 push 即可，客户端会显示「可更新」。CI 校验失败（清单非法、入口缺失）会直接红灯，不会破坏线上市场。
+`.bkx`、`.zip`、`.upx` 都是可安装的 zip 包。市场 registry 的 `manifest.json` 只承载卡片/版本/sha256 元数据，完整 uTools `plugin.json` 留在包内，由客户端安装器最终校验。
+
+**升级插件**：改 `plugin.json` 的 `version` 后 push 即可，客户端会显示「可更新」。公开仓 CI 校验失败（清单非法、入口缺失、路径越界）会直接红灯，不会更新线上市场。
 
 ## 7. 兼容性说明
 
-- 清单风格有意兼容 uTools（`features/cmds/main/preload`），uTools 插件只需补一个 `preload.js`（用 `getBK()` 适配 `utools` API 差异）即可迁移。
-- 插件渲染环境是 Chromium（与宿主 Electron 一致），可自由使用现代 Web API；`network` 权限用于声明插件需要联网（用户知情），宿主不代理或拦截页面自身的 fetch。
+- 当前已实现并可用：生命周期（含 `onPluginDetach` / `onDbPull`）、子输入框、主窗口控制、通知、剪贴板文本/图片、同步文档 DB、外部链接/路径、显示器信息、打开/保存对话框、区域截屏、按键注入、`createBrowserWindow`、`redirect`、版本/深色环境信息。
+- 兼容降级：uTools 账号/云端同步、`ubrowser`、私有后端和云端复制语义不伪造；`fetchUserServerToken` 返回 BoxKit 本地设备令牌，网络权限为声明性元数据（兼容模式下插件 Node/fetch 不经宿主代理）。
+- `copyText/copyImage` 返回 boolean；`screenCapture` 回调为 `data:image/png;base64,...`；`plugin.json` 原始未知字段会保留。
 
 ## uTools 插件兼容（重要）
 
