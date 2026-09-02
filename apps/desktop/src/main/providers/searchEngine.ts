@@ -110,15 +110,28 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
       const hit = byId.get(id);
       if (hit) collect({ ...hit, section: "recent" });
     }
-    // 2) 插件功能（未在最近使用里的）
+    // 2) 固定功能：插件功能 + 少量系统快捷命令（应用列表仍只在文字搜索中出现）
     for (const r of byId.values()) {
       if (r.kind === "plugin" && !recentIds.includes(r.id)) collect(r);
     }
+    for (const c of deps.commands) {
+      const id = `cmd:${c.id}`;
+      if (!recentIds.includes(id)) {
+        collect({
+          id,
+          title: c.title,
+          builtinIcon: c.builtinIcon,
+          kind: "command",
+          score: 28,
+          section: "plugin",
+        });
+      }
+    }
+
     // 3) 市场精选：官方插件 + 打开市场入口
     const official = ["utools-demo", "devtoolbox", "clipboard-history"];
     for (const f of deps.features) {
-      const gid = `plugin:${f.pluginId}:${f.feature.code}`;
-      if (official.includes(f.pluginId) && !recentIds.includes(gid)) {
+      if (official.includes(f.pluginId)) {
         collect({
           id: `plugin:${f.pluginId}:${f.feature.code}`,
           title: f.feature.explain,

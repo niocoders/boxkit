@@ -25,18 +25,20 @@ function resolveSearchPage(): { url?: string; file?: string } {
 export function createMainWindow(): BrowserWindow {
   win = new BrowserWindow({
     // uTools 式固定面板：不拉伸、不最小化，尺寸恒定
-    width: 760,
-    height: 600,
-    minWidth: 760,
-    minHeight: 600,
-    maxWidth: 760,
-    maxHeight: 600,
+    width: 802,
+    height: 418,
+    minWidth: 802,
+    minHeight: 418,
+    maxWidth: 802,
+    maxHeight: 418,
     resizable: false,
     show: false,
     frame: false,
     transparent: true,
     backgroundColor: "#00000000",
+    // 半透明磨砂：macOS 用 vibrancy，Windows 用 backgroundMaterial（Electron ≥ 38）
     vibrancy: process.platform === "darwin" ? "under-window" : undefined,
+    backgroundMaterial: process.platform === "win32" ? "acrylic" : undefined,
     visualEffectState: "active",
     fullscreenable: false,
     skipTaskbar: true,

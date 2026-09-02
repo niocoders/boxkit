@@ -4,6 +4,13 @@ import { boxkit } from "./bridge.js";
 
 type Mode = "search" | "plugin";
 
+/** 顶栏右侧品牌小 logo（uTools 式悬浮标）：内联 SVG，蓝色渐变圆角方块 + B */
+const BRAND_LOGO =
+  "data:image/svg+xml," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4f6bff"/><stop offset="1" stop-color="#23c4ff"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#g)"/><text x="16" y="21.5" font-family="Arial,sans-serif" font-size="16" font-weight="700" fill="#fff" text-anchor="middle">B</text></svg>`,
+  );
+
 /** 展开的副命令状态：uTools 式「→ 展开插件关键字」 */
 interface Expanded {
   base: SearchResult;
@@ -154,7 +161,12 @@ export function App() {
       action: recentAll.length > GRID_COLUMNS ? (recentExpanded ? "收起" : `展开 (${recentAll.length})`) : undefined,
       items: recentExpanded ? recentAll : recentAll.slice(0, GRID_COLUMNS),
     });
-    groups.push({ key: "plugin", title: "全部功能", action: "全部 >", items: by("plugin") });
+    groups.push({
+      key: "plugin",
+      title: "已固定",
+      action: "全部 >",
+      items: by("plugin"),
+    });
     groups.push({ key: "market", title: "市场精选", items: by("market") });
     return groups.filter((g) => g.items.length > 0);
   }, [isGrid, results, recentExpanded]);
@@ -303,7 +315,7 @@ export function App() {
           autoFocus
         />
         {mode === "plugin" && <span className="p-name">{p?.displayName}</span>}
-        {mode === "search" && <span className="app-mark">B</span>}
+        {mode === "search" && <img className="app-mark" src={BRAND_LOGO} alt="" draggable={false} />}
       </div>
 
       {isGrid && (
