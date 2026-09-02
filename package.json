@@ -33,9 +33,11 @@
     "typecheck": "tsc -p apps/desktop/tsconfig.json --noEmit",
     "test": "vitest run",
     "icons": "node tools/gen-icons.mjs",
-    "audit:governance": "node tools/audit-governance.mjs"
+    "audit:governance": "node tools/audit-governance.mjs",
+    "ui:smoke": "node tools/electron-ui-smoke.mjs"
   },
   "devDependencies": {
+    "playwright-core": "1.55.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   },

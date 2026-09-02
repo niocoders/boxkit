@@ -30,6 +30,7 @@ pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm ui:smoke
 ```
 
 本地运行：
@@ -70,7 +71,7 @@ tools/                       图标生成、更新服务器示例和治理检查
 
 ## 测试
 
-当前 Vitest 覆盖搜索评分、结果排序、清单归一化和路径安全。桌面渲染层和真实 Electron 交互仍需要在 CI 中继续扩展，不能仅由 smoke 初始化输出替代。
+当前测试覆盖搜索评分、结果排序、清单归一化、路径安全、剪贴板过滤、暂存标识和市场摘要。`pnpm ui:smoke` 会启动真实 Electron 并通过 Playwright CDP 验证搜索输入、键盘导航、首次市场跳转、市场卡片、已安装空态和设置开关；截图与报告写入 `artifacts/electron-ui/`。
 
 ## 许可证
 

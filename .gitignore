@@ -8,3 +8,4 @@ out/
 # Local build output
 apps/desktop/dist/
 apps/desktop/release/
+artifacts/
