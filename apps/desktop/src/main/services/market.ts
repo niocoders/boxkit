@@ -127,6 +127,10 @@ export const marketService = {
       fs.writeFileSync(tmp, buf);
       try {
         const staged = await stageInstall(tmp, pluginManager.installedVersions());
+        if (staged.manifest.name !== entry.pluginId || staged.manifest.version !== entry.version) {
+          logger.warn("market", `清单与包内容不一致：registry=${entry.pluginId}@${entry.version}, package=${staged.manifest.name}@${staged.manifest.version}`);
+          return { error: "插件包身份与市场清单不一致" };
+        }
         const preview: InstallPreview = {
           stagingId: staged.stagingId,
           name: staged.manifest.name,

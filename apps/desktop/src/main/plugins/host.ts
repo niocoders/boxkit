@@ -332,8 +332,9 @@ export class PluginHost {
 
   destroyView(name: string): void {
     const view = this.views.get(name);
-    if (this.currentName === name) this.detachCurrent(true, true);
-    if (view) {
+    const wasCurrent = this.currentName === name;
+    if (wasCurrent) this.detachCurrent(true, true);
+    if (view && !wasCurrent) {
       try {
         view.webContents.send(IPC.pkOutEvent, true);
         view.webContents.send(IPC.pkDetach);
