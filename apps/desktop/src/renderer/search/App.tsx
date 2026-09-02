@@ -4,21 +4,21 @@ import { boxkit } from "./bridge.js";
 
 type Mode = "search" | "plugin";
 
-/** 顶栏右侧品牌小 logo（uTools 式悬浮标）：内联 SVG，蓝色渐变圆角方块 + B */
+/** 顶栏右侧品牌小 logo：内联 SVG，蓝色渐变圆角方块 + B */
 const BRAND_LOGO =
   "data:image/svg+xml," +
   encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4f6bff"/><stop offset="1" stop-color="#23c4ff"/></linearGradient></defs><rect width="32" height="32" rx="8" fill="url(#g)"/><text x="16" y="21.5" font-family="Arial,sans-serif" font-size="16" font-weight="700" fill="#fff" text-anchor="middle">B</text></svg>`,
   );
 
-/** 展开的副命令状态：uTools 式「→ 展开插件关键字」 */
+/** 展开的副命令状态 */
 interface Expanded {
   base: SearchResult;
   cmds: string[];
 }
 
 interface GridGroup {
-  key: "recent" | "plugin" | "market";
+  key: "recent" | "pinned" | "plugin" | "market";
   title: string;
   action?: string;
   items: SearchResult[];
@@ -43,7 +43,7 @@ function ResultIcon({ r, size = 34 }: { r: SearchResult; size?: number }) {
   );
 }
 
-/** 关键字命中高亮（uTools 蓝色高亮风格） */
+/** 关键字命中高亮 */
 function Highlight({ text, query }: { text: string; query: string }) {
   const q = query.trim();
   if (!q) return <>{text}</>;
@@ -62,6 +62,8 @@ const KIND_BADGE: Record<string, { label: string; dim?: boolean }> = {
   plugin: { label: "插件" },
   app: { label: "应用", dim: true },
   command: { label: "命令", dim: true },
+  file: { label: "文件", dim: true },
+  clipboard: { label: "剪贴板", dim: true },
   web: { label: "网络", dim: true },
 };
 
@@ -76,6 +78,8 @@ export function App() {
   const [expanded, setExpanded] = useState<Expanded | null>(null);
   const [recentExpanded, setRecentExpanded] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [clipboardCaptureError, setClipboardCaptureError] = useState<string | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const seqRef = useRef(0);
@@ -92,6 +96,18 @@ export function App() {
       setResults([]);
     }
   }, []);
+
+  useEffect(() => {
+    void boxkit.favorites?.get().then((state) => setPinnedIds(new Set(state.ids)));
+  }, []);
+
+  const togglePinned = useCallback(async (id: string) => {
+    const next = pinnedIds.has(id)
+      ? await boxkit.favorites?.unpin(id)
+      : await boxkit.favorites?.pin(id);
+    if (next) setPinnedIds(new Set(next.ids));
+    void runQuery(query);
+  }, [pinnedIds, query, runQuery]);
 
   // 插件兼容 API 对主搜索框的值/焦点控制
   useEffect(() => {
@@ -139,6 +155,42 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const offData = boxkit.onSearchDataChanged?.(() => void runQuery(query));
+    return () => offData?.();
+  }, [runQuery, query]);
+
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const data = event.clipboardData;
+      if (!data) return;
+      const paths = Array.from(data.files ?? []).map((file) => (file as File & { path?: string }).path).filter(Boolean) as string[];
+      const text = data.getData("text/plain");
+      if (!paths.length && !text) return;
+      event.preventDefault();
+      setClipboardCaptureError(null);
+      void boxkit.clipboardHistory?.capture({ text: text || undefined, paths: paths.length ? paths : undefined })
+        .then(() => void runQuery(query))
+        .catch(() => setClipboardCaptureError("无法读取粘贴内容"));
+      if (text) setQuery(text.slice(0, 1000));
+    };
+    const onDrop = (event: DragEvent) => {
+      const paths = Array.from(event.dataTransfer?.files ?? []).map((file) => (file as File & { path?: string }).path).filter(Boolean) as string[];
+      if (!paths.length) return;
+      event.preventDefault();
+      void boxkit.clipboardHistory?.capture({ paths }).then(() => void runQuery(query));
+    };
+    const onDragOver = (event: DragEvent) => event.preventDefault();
+    window.addEventListener("paste", onPaste);
+    window.addEventListener("drop", onDrop);
+    window.addEventListener("dragover", onDragOver);
+    return () => {
+      window.removeEventListener("paste", onPaste);
+      window.removeEventListener("drop", onDrop);
+      window.removeEventListener("dragover", onDragOver);
+    };
+  }, [runQuery, query]);
+
   // 输入防抖查询
   useEffect(() => {
     const t = setTimeout(() => {
@@ -159,7 +211,7 @@ export function App() {
 
   const isGrid = mode === "search" && !query && !expanded && results.length > 0;
 
-  // 空态网格分组（uTools 6：最近使用 / 插件功能 / 市场精选）
+  // 空态网格分组（最近使用 / 已固定 / 全部功能 / 市场精选）
   const gridGroups = useMemo<GridGroup[]>(() => {
     if (!isGrid) return [];
     const by = (s: string) => results.filter((r) => (r.section ?? "plugin") === s);
@@ -172,9 +224,13 @@ export function App() {
       items: recentExpanded ? recentAll : recentAll.slice(0, GRID_COLUMNS),
     });
     groups.push({
-      key: "plugin",
+      key: "pinned",
       title: "已固定",
-      action: "全部 >",
+      items: by("pinned"),
+    });
+    groups.push({
+      key: "plugin",
+      title: "全部功能",
       items: by("plugin"),
     });
     groups.push({ key: "market", title: "市场精选", items: by("market") });
@@ -239,6 +295,12 @@ export function App() {
       }
       return;
     }
+    if (mode === "search" && (e.key.toLowerCase() === "p") && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const current = isGrid ? flatGrid[selected] : results[selected];
+      if (current) void togglePinned(current.id);
+      return;
+    }
     if (mode === "plugin") return; // 输入转发给插件，不拦截
     if (isGrid) {
       const n = flatGrid.length;
@@ -271,7 +333,7 @@ export function App() {
       e.preventDefault();
       setSelected((i) => Math.max(0, i - 1));
     } else if (e.key === "ArrowRight") {
-      // uTools 式：→ 展开选中插件的副命令（全部关键字）
+      // → 展开选中插件的副命令（全部关键字）
       if (!expanded) {
         const r = results[selected];
         if (r?.kind === "plugin" && r.pluginCmds && r.pluginCmds.length > 1) {
@@ -349,13 +411,17 @@ export function App() {
                 {g.items.map((r) => {
                   const idx = flatGrid.indexOf(r);
                   return (
-                    <div
-                      key={g.key + r.id}
-                      className={`g-item ${idx === selected ? "active" : ""}`}
-                      onMouseEnter={() => setSelected(idx)}
-                      onClick={() => executeGridItem(r)}
-                      title={r.subtitle}
-                    >
+                  <div
+                    key={g.key + r.id}
+                    className={`g-item ${idx === selected ? "active" : ""}`}
+                    onMouseEnter={() => setSelected(idx)}
+                    onClick={() => executeGridItem(r)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      void togglePinned(r.id);
+                    }}
+                    title={`${r.subtitle ?? ""}${r.pinned ? " · 已固定" : ""}`}
+                  >
                       <ResultIcon r={r} size={48} />
                       <span className="g-label">{r.title}</span>
                     </div>
@@ -404,6 +470,10 @@ export function App() {
                 className={`r-item ${i === selected ? "active" : ""}`}
                 onMouseEnter={() => setSelected(i)}
                 onClick={() => executeAt(i)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  void togglePinned(r.id);
+                }}
               >
                 <ResultIcon r={r} />
                 <div className="r-main">
@@ -459,6 +529,7 @@ export function App() {
       </div>
       )}
 
+      {clipboardCaptureError && <div className="toast" role="alert">{clipboardCaptureError}</div>}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );

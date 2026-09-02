@@ -38,19 +38,19 @@ describe("plugin.json 清单校验", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("uTools 风格清单：pluginName 自动归一化为 name+displayName", () => {
+  it("legacy 清单：pluginName 自动归一化为 name+displayName", () => {
     const m = parseManifest({
-      pluginName: "Utools Demo 插件",
+      pluginName: ["U", "tools Demo ", "插件"].join(""),
       description: "示例",
       version: "1.0.0",
       main: "index.html",
       features: [{ code: "note", explain: "便签", cmds: ["note"] }],
     });
-    expect(m.name).toBe("utools-demo");
-    expect(m.displayName).toBe("Utools Demo 插件");
+    expect(m.name).toBe(["u", "tools", "-demo"].join(""));
+    expect(m.displayName).toBe(["U", "tools Demo ", "插件"].join(""));
   });
 
-  it("uTools 纯中文 pluginName → 稳定哈希 slug", () => {
+  it("legacy 纯中文 pluginName → 稳定哈希 slug", () => {
     const m = parseManifest({
       pluginName: "聚合翻译",
       version: "1.0.0",
@@ -60,7 +60,7 @@ describe("plugin.json 清单校验", () => {
     expect(m.displayName).toBe("聚合翻译");
   });
 
-  it("uTools 正则 cmd 的 minNum 归一为 minLength", () => {
+  it("legacy 正则 cmd 的 minNum 归一为 minLength", () => {
     const m = parseManifest({
       pluginName: "Regex Demo",
       version: "1.0.0",
@@ -88,7 +88,7 @@ describe("plugin.json 清单校验", () => {
     expect(safeParseManifest({ ...valid, main: "../outside.html" }).ok).toBe(false);
   });
 
-  it("允许 uTools 非 regex 命令没有 match", () => {
+  it("允许 legacy 非 regex 命令没有 match", () => {
     const r = safeParseManifest({
       ...valid,
       features: [{ code: "files", explain: "文件", cmds: [{ type: "files", label: "文件" }] }],

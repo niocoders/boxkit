@@ -6,11 +6,11 @@ import { settings } from "../core/config.js";
 import { logger } from "../core/logger.js";
 
 /**
- * 内置默认更新源（占位域名，商用时替换为自有服务器）。
- * 支持 ${os}/${arch}/${version} 模板变量；可用设置页 updateFeed 或
- * 环境变量 BOXKIT_UPDATE_URL 覆盖（本地测试用 tools/update-server）。
+ * 默认更新源使用 GitHub Releases 的 generic 资产目录；本地测试可通过设置页 updateFeed 或
+ * 环境变量 BOXKIT_UPDATE_URL 覆盖。
  */
-const DEFAULT_FEED = "https://updates.boxkit.app/${os}/${arch}";
+const DEFAULT_FEED = "github:niocoders/boxkit";
+const DEFAULT_GITHUB = { owner: "niocoders", repo: "boxkit", releaseType: "release" as const };
 const TEMPLATE = /\$\{(os|arch|version)\}/g;
 
 export const SMOKING = !!process.env.BOXKIT_SMOKE;
@@ -22,6 +22,7 @@ let initialized = false;
 
 function feedUrl(): string {
   const tpl = settings.get().updateFeed || process.env.BOXKIT_UPDATE_URL || DEFAULT_FEED;
+  if (tpl === DEFAULT_FEED) return tpl;
   return tpl.replace(TEMPLATE, (_, key: string) => {
     switch (key) {
       case "os":
@@ -89,11 +90,16 @@ export function initUpdater(): void {
 export async function checkForUpdates(silent = false): Promise<UpdateState> {
   if (SMOKING) return updaterState();
   try {
-    autoUpdater.setFeedURL({
-      provider: "generic",
-      url: feedUrl(),
-      channel: "latest",
-    });
+    const feed = feedUrl();
+    if (feed === DEFAULT_FEED) {
+      autoUpdater.setFeedURL({ provider: "github", ...DEFAULT_GITHUB });
+    } else {
+      autoUpdater.setFeedURL({
+        provider: "generic",
+        url: feed,
+        channel: "latest",
+      });
+    }
     setState({ status: "checking" });
     await autoUpdater.checkForUpdates();
   } catch (e) {

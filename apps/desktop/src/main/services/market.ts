@@ -14,8 +14,27 @@ const DEFAULT_MARKET_URL = "https://niocoders.github.io/boxkit-market";
 const FETCH_TIMEOUT_MS = 10000;
 
 function marketBase(): string {
-  const u = settings.get().marketUrl;
-  return (u && u.trim()) || DEFAULT_MARKET_URL;
+  const u = settings.get().marketUrl?.trim();
+  const base = u || DEFAULT_MARKET_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(base);
+  } catch {
+    throw new Error("市场地址无效");
+  }
+  const localDev = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1";
+  if (parsed.protocol !== "https:" && !(localDev && parsed.protocol === "http:")) {
+    throw new Error("市场地址必须使用 HTTPS（本地开发可使用 localhost）");
+  }
+  return parsed.href.replace(/\/+$/, "");
+}
+
+export function isValidMarketSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);
+}
+
+function validSha256(value: unknown): value is string {
+  return isValidMarketSha256(value);
 }
 
 function cmpVersion(a: string, b: string): number {
@@ -50,8 +69,13 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
 /** 相对清单路径（plugins/x.bkx、logo/x.svg）→ 绝对 URL */
 function toAbsolute(base: string, u: string | undefined): string {
   if (!u) return "";
-  if (/^https?:\/\//i.test(u)) return u;
-  return new URL(u.replace(/^\/+/, ""), `${base.replace(/\/+$/, "")}/`).href;
+  const resolved = new URL(u, `${base.replace(/\/+$/, "")}/`);
+  const origin = new URL(base).origin;
+  if (resolved.origin !== origin) throw new Error("市场资源必须来自配置的市场地址");
+  if (resolved.protocol !== "https:" && !["localhost", "127.0.0.1", "::1"].includes(resolved.hostname)) {
+    throw new Error("市场资源必须使用 HTTPS");
+  }
+  return resolved.href;
 }
 
 /** 拉取市场清单（公开仓 boxkit-market Pages 生成，客户端只读消费） */
@@ -67,6 +91,11 @@ async function fetchManifest(base: string): Promise<MarketPlugin[]> {
       ? (json as { plugins: MarketPlugin[] }).plugins
       : null;
   if (!Array.isArray(list)) throw new Error("市场清单格式不正确");
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object" || !validSha256((entry as MarketPlugin).sha256)) {
+      throw new Error("市场清单缺少有效的 sha256");
+    }
+  }
   return list;
 }
 
@@ -81,8 +110,8 @@ function matchKeyword(entry: MarketPlugin, kw: string): boolean {
 export const marketService = {
   /** 拉取市场列表，按关键字过滤并标注本地安装/可更新状态 */
   async fetchMarket(keyword: string): Promise<MarketPlugin[] | { error: string }> {
-    const base = marketBase();
     try {
+      const base = marketBase();
       const manifest = await fetchManifest(base);
       const installed = installedMap();
       return manifest
@@ -116,12 +145,11 @@ export const marketService = {
       const res = await fetchWithTimeout(fileUrl);
       if (!res.ok) return { error: `下载失败（HTTP ${res.status}）` };
       const buf = Buffer.from(await res.arrayBuffer());
-      if (entry.sha256) {
-        const sha = createHash("sha256").update(buf).digest("hex");
-        if (sha !== entry.sha256) {
-          logger.warn("market", `sha256 不匹配：期望 ${entry.sha256}，实际 ${sha}`);
-          return { error: "插件包校验失败（sha256 不匹配），请稍后重试" };
-        }
+      if (!validSha256(entry.sha256)) return { error: "市场条目缺少有效的 sha256，已拒绝安装" };
+      const sha = createHash("sha256").update(buf).digest("hex");
+      if (sha.toLowerCase() !== entry.sha256.toLowerCase()) {
+        logger.warn("market", `sha256 不匹配：期望 ${entry.sha256}，实际 ${sha}`);
+        return { error: "插件包校验失败（sha256 不匹配），请稍后重试" };
       }
       const tmp = path.join(os.tmpdir(), `boxkit-market-${pluginId}-${Date.now()}.bkx`);
       fs.writeFileSync(tmp, buf);
@@ -129,6 +157,7 @@ export const marketService = {
         const staged = await stageInstall(tmp, pluginManager.installedVersions());
         if (staged.manifest.name !== entry.pluginId || staged.manifest.version !== entry.version) {
           logger.warn("market", `清单与包内容不一致：registry=${entry.pluginId}@${entry.version}, package=${staged.manifest.name}@${staged.manifest.version}`);
+          fs.rmSync(staged.dir, { recursive: true, force: true });
           return { error: "插件包身份与市场清单不一致" };
         }
         const preview: InstallPreview = {

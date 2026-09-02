@@ -7,6 +7,20 @@ import { pluginsDir, stagingDir } from "../core/paths.js";
 import { logger } from "../core/logger.js";
 
 const execFileP = promisify(execFile);
+const STAGING_ID = /^s-[a-z0-9]+-[a-z0-9]{6}$/i;
+
+export function isValidStagingId(value: unknown): value is string {
+  return typeof value === "string" && STAGING_ID.test(value);
+}
+
+function safeStagingId(value: unknown): string {
+  const id = String(value ?? "");
+  if (!isValidStagingId(id)) throw new Error("暂存标识无效");
+  const root = path.resolve(stagingDir());
+  const full = path.resolve(root, id);
+  if (!full.startsWith(root + path.sep)) throw new Error("暂存路径越界");
+  return id;
+}
 
 export interface StagedPlugin {
   stagingId: string;
@@ -185,7 +199,7 @@ export async function stageInstall(
 
 /** 用户确认后：把暂存目录正式落入 plugins/ */
 export async function commitInstall(stagingId: string): Promise<PluginManifest> {
-  const staged = path.join(stagingDir(), stagingId);
+  const staged = path.join(stagingDir(), safeStagingId(stagingId));
   const manifest = readManifest(staged);
   if (!manifest) throw new Error("暂存目录无效或已被清理");
   const dest = path.join(pluginsDir(), manifest.name);
@@ -193,6 +207,15 @@ export async function commitInstall(stagingId: string): Promise<PluginManifest> 
   fs.mkdirSync(pluginsDir(), { recursive: true });
   fs.renameSync(staged, dest);
   return manifest;
+}
+
+/** 用户取消确认时删除对应暂存目录。只接受 stageInstall 生成的 ID。 */
+export function discardInstall(stagingId: string): void {
+  try {
+    fs.rmSync(path.join(stagingDir(), safeStagingId(stagingId)), { recursive: true, force: true });
+  } catch {
+    /* invalid or already removed staging IDs are treated as cancelled */
+  }
 }
 
 export function cleanupStaging(): void {

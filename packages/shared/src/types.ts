@@ -31,8 +31,14 @@ export interface SearchResult {
   icon?: string;
   iconKind?: "data-url" | "builtin";
   builtinIcon?: string;
-  kind: "app" | "command" | "plugin" | "web";
+  kind: "app" | "command" | "plugin" | "web" | "file" | "clipboard";
   score: number;
+  /** 是否已收藏/固定（只由主进程根据持久化 ID 标记） */
+  pinned?: boolean;
+  /** kind=file 时有效 */
+  filePath?: string;
+  /** kind=clipboard 时有效 */
+  clipboardId?: string;
   /** kind=plugin 时有效 */
   pluginId?: string;
   featureCode?: string;
@@ -40,12 +46,12 @@ export interface SearchResult {
   cmdType?: "text" | "regex" | "over";
   /** kind=web 时有效：搜索词 */
   webQuery?: string;
-  /** kind=plugin 时有效：该 feature 的全部关键字（uTools 式副命令，→ 展开候选） */
+  /** kind=plugin 时有效：该 feature 的全部关键字（兼容副命令，→ 展开候选） */
   pluginCmds?: string[];
   /** 执行时透传给插件的 payload（副命令选中时为其关键字文本） */
   payload?: string;
-  /** 空态网格分组：recent=最近使用 plugin=插件功能 market=市场精选 */
-  section?: "recent" | "plugin" | "market";
+  /** 空态网格分组：recent=最近使用 pinned=已固定 plugin=插件功能 market=市场精选 */
+  section?: "recent" | "pinned" | "plugin" | "market";
 }
 
 export type SearchMode = "search" | "plugin";
@@ -86,6 +92,45 @@ export interface InstallPreview {
   logo?: string;
 }
 
+export interface FavoriteState {
+  /** 仅保存可复现的结果 ID，不保存插件执行 payload。 */
+  ids: string[];
+}
+
+export interface FileSearchEntry {
+  path: string;
+  name: string;
+  isDirectory?: boolean;
+  size?: number;
+  modifiedAt?: number;
+}
+
+export type ClipboardHistoryKind = "text" | "image" | "file";
+
+export interface ClipboardHistoryItem {
+  id: string;
+  kind: ClipboardHistoryKind;
+  text?: string;
+  /** image kind 的 PNG data URL；受主进程大小限制。 */
+  imageDataUrl?: string;
+  /** file kind 只保存路径，不读取或保存文件内容。 */
+  paths?: string[];
+  createdAt: number;
+  size: number;
+}
+
+export interface ClipboardHistoryQuery {
+  text?: string;
+  limit?: number;
+}
+
+/** search renderer 粘贴/拖放传给主进程的受限数据。 */
+export interface ClipboardCapture {
+  text?: string;
+  paths?: string[];
+  image?: Uint8Array;
+}
+
 export interface AppSettings {
   hotkey: string;
   autostart: boolean;
@@ -97,6 +142,12 @@ export interface AppSettings {
   devPluginPaths: string[];
   /** 插件市场服务地址；null = 内置默认（GitHub Pages 静态市场） */
   marketUrl: string | null;
+  /** 搜索结果 ID 的持久化收藏列表。 */
+  pinnedIds: string[];
+  /** 剪贴板历史监听总开关，默认关闭以避免意外保存敏感数据。 */
+  clipboardHistoryEnabled: boolean;
+  /** 剪贴板历史最大条数，主进程仍会执行硬上限。 */
+  clipboardHistoryLimit: number;
 }
 
 /** configSet 的返回：设置 + 快捷键应用结果（冲突时给出提示） */
@@ -121,26 +172,17 @@ export interface MarketPlugin {
   fileUrl: string;
   /** .bkx 文件大小（字节），用于展示 */
   fileSize?: number;
-  /** .bkx 的 sha256（客户端下载后校验） */
-  sha256?: string;
+  /** .bkx 的 sha256，市场清单必须提供 64 位十六进制值 */
+  sha256: string;
+  license?: string;
+  maintainer?: string;
+  sourceUrl?: string;
   /** 关键字（features.cmds 汇总），供市场搜索 */
   keywords?: string[];
   /** 相对客户端已安装版本的状态（客户端本地比对后覆盖） */
   installed?: boolean;
   updatable?: boolean;
   localVersion?: string;
-}
-
-export type LicenseMode = "trial" | "trial-expired" | "licensed" | "license-expired";
-
-export interface LicenseState {
-  mode: LicenseMode;
-  /** trial 剩余天数（向上取整）；licensed 为剩余有效期天数，null = 永久 */
-  daysLeft: number | null;
-  email?: string;
-  plan?: string;
-  expiresAt?: number | null;
-  trialStartedAt?: number;
 }
 
 export interface UpdateState {

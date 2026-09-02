@@ -1,4 +1,4 @@
-/* uTools 风格主题：浅色默认，跟随系统深色 */
+/* 面板主题：浅色默认，跟随系统深色 */
 * {
   margin: 0;
   padding: 0;
@@ -7,7 +7,7 @@
 }
 
 :root {
-  /* 浅色（uTools 默认）：白底、大圆角、轻微阴影 */
+  /* 浅色：白底、大圆角、轻微阴影 */
   --bg: rgba(247, 247, 247, 0.82);
   --bg-hover: #e8f3fc;
   --bg-soft: #f5f6f8;
@@ -24,7 +24,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: rgba(247, 247, 247, 0.86);
+    --bg: rgba(25, 27, 32, 0.92);
     --bg-hover: #35383f;
     --bg-soft: #2c2e33;
     --border: #3a3d44;
@@ -64,7 +64,7 @@ body {
   border: none;
 }
 
-/* ————— 顶栏：uTools 大输入框（无独立 logo 格、无底部分隔线） ————— */
+/* 顶栏：大输入框 */
 .header {
   display: flex;
   align-items: center;
@@ -131,7 +131,7 @@ body {
   border-radius: 999px;
 }
 
-/* ————— 结果列表：uTools 行样式 ————— */
+/* 结果列表：紧凑行样式 */
 .results {
   flex: 1;
   overflow-y: auto;
@@ -244,7 +244,7 @@ body {
   font-size: 12px;
 }
 
-/* ————— 底栏：uTools 左提示右入口 ————— */
+/* 底栏：左侧提示和右侧入口 */
 .footer {
   flex: none;
   display: flex;
@@ -307,7 +307,7 @@ body {
   }
 }
 
-/* ————— uTools 6 式空态网格 ————— */
+/* 空态网格 */
 .grid-scroll {
   flex: 1;
   overflow-y: auto;
@@ -343,7 +343,7 @@ body {
   display: grid;
   grid-template-columns: repeat(9, 1fr);
   gap: 0;
-  /* uTools 主面板一行 9 个图标 */
+  /* 主面板一行 9 个图标 */
 }
 
 .g-item {

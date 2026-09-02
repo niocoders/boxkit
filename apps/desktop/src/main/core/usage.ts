@@ -4,7 +4,7 @@ import { userDataDir } from "./paths.js";
 import { logger } from "./logger.js";
 
 /**
- * 使用频率统计（uTools 式排序：用得越多越靠前；空面板展示「最近使用」）。
+ * 使用频率统计：用得越多越靠前；空面板展示「最近使用」。
  * 数据落在 userData/usage.json，内存缓存 + 防抖落盘。
  */
 export interface UsageEntry {

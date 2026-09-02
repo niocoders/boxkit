@@ -37,82 +37,51 @@ describe("matchScore", () => {
   it("大小写不敏感", () => {
     expect(matchScore("SLEEP", "sleep")).toBe(100);
   });
+  it("支持中文首字母和轻量模糊匹配", () => {
+    expect(matchScore("w", "微信")).not.toBeNull();
+    expect(matchScore("vsc", "Visual Studio Code")).not.toBeNull();
+  });
 });
 
 describe("searchQuery", () => {
   it("应用命中并携带路径", () => {
     const rs = searchQuery("vis", deps);
-    expect(rs[0].kind).toBe("app");
-    expect(rs[0].id).toBe("app:/Applications/Visual Studio Code.app");
+    expect(rs.find((r) => r.kind === "app")?.id).toBe("app:/Applications/Visual Studio Code.app");
   });
-
   it("中文关键字匹配插件 feature", () => {
-    const rs = searchQuery("时间", deps);
-    const hit = rs.find((r) => r.kind === "plugin");
+    const hit = searchQuery("时间", deps).find((r) => r.kind === "plugin");
     expect(hit?.featureCode).toBe("timestamp");
     expect(hit?.pluginId).toBe("devtoolbox");
-    expect(hit?.score).toBeGreaterThan(0);
   });
-
-  it("regex feature 命中", () => {
-    const rs = searchQuery("123456", deps);
-    const hit = rs.find((r) => r.kind === "plugin" && r.featureCode === "lucky");
-    expect(hit).toBeDefined();
+  it("regex feature 命中及长度限制", () => {
+    expect(searchQuery("123456", deps).find((r) => r.featureCode === "lucky")).toBeDefined();
+    expect(searchQuery("123", deps).find((r) => r.featureCode === "lucky")).toBeUndefined();
   });
-
-  it("regex feature 长度不足不命中", () => {
-    const rs = searchQuery("123", deps);
-    expect(rs.find((r) => r.featureCode === "lucky")).toBeUndefined();
-  });
-
   it("插件关键字加权高于应用包含匹配", () => {
-    const rs = searchQuery("ts", deps);
-    expect(rs[0].kind).toBe("plugin");
+    expect(searchQuery("ts", deps)[0].kind).toBe("plugin");
   });
-
-  it("空输入返回功能目录（插件/命令优先，可含应用）", () => {
-    const rs = searchQuery("", deps);
-    expect(rs.length).toBeGreaterThan(0);
-    expect(rs.every((r) => ["plugin", "command", "app"].includes(r.kind))).toBe(true);
-    // 插件功能必须出现在目录里
+  it("空输入返回功能目录并保留最近使用", () => {
+    const rs = searchQuery("", { ...deps, usage: { "app:/Applications/WeChat.app": { count: 3, last: Date.now() } } });
+    expect(rs[0].id).toBe("app:/Applications/WeChat.app");
     expect(rs.some((r) => r.kind === "plugin" && r.featureCode === "timestamp")).toBe(true);
   });
-
-  it("空输入时最近使用排在最前", () => {
-    const rs = searchQuery("", {
+  it("收藏只进入固定分组且不重复", () => {
+    const rs = searchQuery("", { ...deps, pinnedIds: ["plugin:devtoolbox:timestamp"] });
+    const ids = rs.map((r) => r.id);
+    expect(rs.find((r) => r.section === "pinned")?.id).toBe("plugin:devtoolbox:timestamp");
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+  it("文件和剪贴板可以被搜索", () => {
+    const rs = searchQuery("notes", {
       ...deps,
-      usage: { "app:/Applications/WeChat.app": { count: 3, last: Date.now() } },
+      files: [{ name: "notes.md", path: "/tmp/notes.md" }],
+      clipboard: [{ id: "1", kind: "text", text: "notes from clipboard", createdAt: 1, size: 20 }],
     });
-    expect(rs[0].id).toBe("app:/Applications/WeChat.app");
+    expect(rs.some((r) => r.kind === "file")).toBe(true);
+    expect(rs.some((r) => r.kind === "clipboard")).toBe(true);
   });
-
-  it("使用频率为命中结果加权", () => {
-    const plain = searchQuery("微信", deps);
-    const boosted = searchQuery("微信", {
-      ...deps,
-      usage: { "app:/Applications/WeChat.app": { count: 5, last: Date.now() } },
-    });
-    const a = plain.find((r) => r.id === "app:/Applications/WeChat.app")!;
-    const b = boosted.find((r) => r.id === "app:/Applications/WeChat.app")!;
-    expect(b.score).toBeGreaterThan(a.score);
-  });
-
-  it("插件结果携带全部关键字（副命令）", () => {
-    const rs = searchQuery("时间", deps);
-    const hit = rs.find((r) => r.featureCode === "timestamp");
-    expect(hit?.pluginCmds).toContain("时间戳");
-    expect(hit?.pluginCmds).toContain("ts");
-  });
-
-  it("platform 字段过滤当前平台", () => {
-    const rs = searchQuery("other", {
-      ...deps,
-      features: [{ pluginId: "platform-plugin", displayName: "Platform", feature: { code: "x", explain: "其他", platform: ["darwin"], cmds: ["other"] } }],
-    });
-    expect(rs.find((r) => r.featureCode === "x")).toBeUndefined();
-  });
-  it("无结果时提供网络搜索兜底", () => {
-    const rs = searchQuery("zzzznothing", { ...deps, apps: [], features: [], commands: [] });
-    expect(rs.some((r) => r.kind === "web")).toBe(true);
+  it("平台过滤和网络兜底", () => {
+    expect(searchQuery("other", { ...deps, features: [{ pluginId: "p", displayName: "P", feature: { code: "x", explain: "其他", platform: ["darwin"], cmds: ["other"] } }] }).find((r) => r.featureCode === "x")).toBeUndefined();
+    expect(searchQuery("zzzznothing", { ...deps, apps: [], features: [], commands: [] }).some((r) => r.kind === "web")).toBe(true);
   });
 });

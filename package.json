@@ -2,7 +2,24 @@
   "name": "boxkit",
   "version": "1.0.0",
   "private": true,
-  "description": "BoxKit — 跨平台效率启动器与插件平台（类 uTools）",
+  "description": "BoxKit — 跨平台效率启动器与插件平台",
+  "license": "MIT",
+  "author": "BoxKit Authors <dev@boxkit.app>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/niocoders/boxkit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/niocoders/boxkit/issues"
+  },
+  "homepage": "https://github.com/niocoders/boxkit#readme",
+  "keywords": [
+    "electron",
+    "launcher",
+    "plugins",
+    "productivity",
+    "cross-platform"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -16,7 +33,7 @@
     "typecheck": "tsc -p apps/desktop/tsconfig.json --noEmit",
     "test": "vitest run",
     "icons": "node tools/gen-icons.mjs",
-    "license": "node tools/license-cli/index.mjs"
+    "audit:governance": "node tools/audit-governance.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

@@ -38,6 +38,15 @@ const api = {
     ipcRenderer.on(IPC.pluginChanged, l);
     return () => ipcRenderer.removeListener(IPC.pluginChanged, l);
   },
+  onSearchDataChanged: (cb: () => void) => {
+    const l = () => cb();
+    ipcRenderer.on(IPC.searchDataChanged, l);
+    ipcRenderer.on(IPC.clipboardHistoryChanged, l);
+    return () => {
+      ipcRenderer.removeListener(IPC.searchDataChanged, l);
+      ipcRenderer.removeListener(IPC.clipboardHistoryChanged, l);
+    };
+  },
   onToast: (cb: (msg: string) => void) => {
     const l = (_: unknown, msg: unknown) => cb(msg as string);
     ipcRenderer.on(IPC.uiToast, l);
@@ -58,11 +67,23 @@ const api = {
   configGet: () => ipcRenderer.invoke(IPC.configGet),
   configSet: (patch: unknown) => ipcRenderer.invoke(IPC.configSet, patch),
 
+  favorites: {
+    get: () => ipcRenderer.invoke(IPC.favoritesGet),
+    pin: (id: string) => ipcRenderer.invoke(IPC.favoritesPin, id),
+    unpin: (id: string) => ipcRenderer.invoke(IPC.favoritesUnpin, id),
+  },
+  clipboardHistory: {
+    query: (query?: unknown) => ipcRenderer.invoke(IPC.clipboardHistoryQuery, query ?? {}),
+    capture: (capture: unknown) => ipcRenderer.invoke(IPC.clipboardHistoryCapture, capture),
+    clear: () => ipcRenderer.invoke(IPC.clipboardHistoryClear),
+  },
+
   // 插件管理
   plugins: {
     list: () => ipcRenderer.invoke(IPC.pluginList),
     installPreview: () => ipcRenderer.invoke(IPC.pluginInstallPreview),
     installConfirm: (stagingId: string) => ipcRenderer.invoke(IPC.pluginInstallConfirm, stagingId),
+    installCancel: (stagingId: string) => ipcRenderer.invoke(IPC.pluginInstallConfirm, stagingId, { cancel: true }),
     enable: (name: string) => ipcRenderer.send(IPC.pluginEnable, name),
     disable: (name: string) => ipcRenderer.send(IPC.pluginDisable, name),
     uninstall: (name: string) => ipcRenderer.invoke(IPC.pluginUninstall, name),

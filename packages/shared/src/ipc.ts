@@ -7,11 +7,19 @@ export const IPC = {
   searchQuery: "search:query",
   searchExecute: "search:execute",
   searchHide: "search:hide",
+  searchDataChanged: "search:data-changed", // main → search renderer：应用/收藏/剪贴板数据变化
   searchInput: "search:input", // renderer → main：插件模式下转发输入框内容
-  searchSetInput: "search:set-input", // main → renderer：uTools.setSubInputValue
+  searchSetInput: "search:set-input", // main → renderer：兼容子输入值
   searchInputFocus: "search:input-focus", // main → renderer
   searchInputSelect: "search:input-select", // main → renderer
   searchInputBlur: "search:input-blur", // main → renderer
+  favoritesGet: "favorites:get",
+  favoritesPin: "favorites:pin",
+  favoritesUnpin: "favorites:unpin",
+  clipboardHistoryQuery: "clipboard:history:query",
+  clipboardHistoryCapture: "clipboard:history:capture",
+  clipboardHistoryClear: "clipboard:history:clear",
+  clipboardHistoryChanged: "clipboard:history:changed", // main → search renderer
   pluginExit: "plugin:exit", // renderer → main：点击返回按钮退出插件
   pluginState: "plugin:state", // main → search renderer：搜索/插件模式切换
   uiToast: "ui:toast", // main → renderer：气泡通知
@@ -31,11 +39,6 @@ export const IPC = {
   pluginAddDevPath: "plugin:add-dev-path",
   pluginRemoveDevPath: "plugin:remove-dev-path",
   pluginChanged: "plugin:changed", // main → search renderer：插件集合变化，需要刷新
-
-  // —— 授权（settings renderer ↔ main）——
-  licenseState: "license:state",
-  licenseActivate: "license:activate",
-  licenseDeactivate: "license:deactivate",
 
   settingsShowTab: "settings:show-tab", // main → settings renderer：打开并切换 tab/视图
   settingsInstallPreview: "settings:install-preview", // main → settings renderer：协议导入待确认安装
@@ -63,50 +66,50 @@ export const IPC = {
   pkDetach: "pk:detach", // main → plugin：插件视图被卸载
   pkSubInputSet: "pk:subinput:set", // plugin → main
   pkSubInputRemove: "pk:subinput:remove", // plugin → main
-  pkSubInputValue: "pk:subinput:value", // utools.setSubInputValue
-  pkSubInputFocus: "pk:subinput:focus", // utools.subInputFocus
-  pkSubInputSelect: "pk:subinput:select", // utools.subInputSelect
-  pkSubInputBlur: "pk:subinput:blur", // utools.subInputBlur
+  pkSubInputValue: "pk:subinput:value", // 兼容子输入赋值
+  pkSubInputFocus: "pk:subinput:focus", // 兼容子输入聚焦
+  pkSubInputSelect: "pk:subinput:select", // 兼容子输入选择
+  pkSubInputBlur: "pk:subinput:blur", // 兼容子输入失焦
   pkSubInputChange: "pk:subinput:change", // main → plugin
-  pkParentSend: "pk:parent:send", // utools.sendToParent
-  pkSubInputCommand: "pk:subinput:command", // plugin → main renderer command
+  pkParentSend: "pk:parent:send", // 兼容父窗口消息
+  pkSubInputCommand: "pk:subinput:command", // 插件 → 主窗口命令
   pkDbGet: "pk:db:get",
   pkDbPut: "pk:db:put",
   pkDbRemove: "pk:db:remove",
   pkDbAll: "pk:db:all",
   pkClipboardRead: "pk:clipboard:read",
   pkClipboardWrite: "pk:clipboard:write",
-  pkClipboardWriteImage: "pk:clipboard:write-image", // utools.copyImage(pngBuffer)
-  pkClipboardWriteImageSync: "pk:clipboard:write-image-sync", // utools.copyImage 同步返回值
-  pkClipboardReadImage: "pk:clipboard:read-image", // utools.readClipboardImage()
-  pkClipboardWriteSync: "pk:clipboard:write-sync", // utools.copyText() 的同步返回值
+  pkClipboardWriteImage: "pk:clipboard:write-image", // 兼容图片写入
+  pkClipboardWriteImageSync: "pk:clipboard:write-image-sync", // 兼容同步图片写入
+  pkClipboardReadImage: "pk:clipboard:read-image", // 兼容图片读取
+  pkClipboardWriteSync: "pk:clipboard:write-sync", // 兼容同步文本写入
   pkClipboardReadSync: "pk:clipboard:read-sync", // 兼容同步读文本
-  pkScreenCapture: "pk:screen-capture", // utools.screenCapture（区域裁剪）
+  pkScreenCapture: "pk:screen-capture", // 兼容区域截图
   pkScreenCaptureRegion: "pk:screen-capture-region", // 选区确认（overlay → main）
-  pkRedirect: "pk:redirect", // utools.redirect({cmd,payload})
-  pkRedirectSync: "pk:redirect-sync", // utools.redirect(label,payload) 同步返回
-  pkUserToken: "pk:user-token", // utools.fetchUserServerToken
+  pkRedirect: "pk:redirect", // 兼容跳转对象
+  pkRedirectSync: "pk:redirect-sync", // 兼容同步跳转
+  pkUserToken: "pk:user-token", // 兼容本地令牌
   pkNotify: "pk:notify",
   pkOpenExternal: "pk:open-external",
   pkResize: "pk:resize",
-  pkResizeHeight: "pk:resize-height", // utools.setExpendHeight
+  pkResizeHeight: "pk:resize-height", // 兼容窗口高度调整
   pkDisplaySize: "pk:display-size",
-  // —— uTools 兼容层（window.utools）——
-  pkHideMain: "pk:hide-main", // utools.hideMainWindow()
-  pkShowMain: "pk:show-main", // utools.showMainWindow()
-  pkOpenPath: "pk:open-path", // utools.openPath(path)
-  pkDisplayFull: "pk:display-full", // utools.getPrimaryDisplay()/getAllDisplays()
-  pkDbDocGet: "pk:db-doc:get", // utools.db.get(id)（同步 IPC）
-  pkDbDocPut: "pk:db-doc:put", // utools.db.put(doc)（同步 IPC）
-  pkDbDocRemove: "pk:db-doc:remove", // utools.db.remove(doc)（同步 IPC）
-  pkDbDocAll: "pk:db-doc:all", // utools.db.allDocs()（同步 IPC）
-  pkDbPull: "pk:db-pull", // utools.onDbPull(docs[])
-  pkKeyboardTap: "pk:keyboard-tap", // utools.simulateKeyboardTap
-  pkCreateBrowserWindow: "pk:bw:create", // utools.createBrowserWindow
-  pkCreateBrowserWindowSync: "pk:bw:create-sync", // utools.createBrowserWindow 同步句柄
+  // —— 兼容 API 通道 ——
+  pkHideMain: "pk:hide-main", // 隐藏主窗口
+  pkShowMain: "pk:show-main", // 显示主窗口
+  pkOpenPath: "pk:open-path", // 打开路径
+  pkDisplayFull: "pk:display-full", // 显示器信息
+  pkDbDocGet: "pk:db-doc:get", // 同步文档读取
+  pkDbDocPut: "pk:db-doc:put", // 同步文档写入
+  pkDbDocRemove: "pk:db-doc:remove", // 同步文档删除
+  pkDbDocAll: "pk:db-doc:all", // 同步文档列表
+  pkDbPull: "pk:db-pull", // 文档变化通知
+  pkKeyboardTap: "pk:keyboard-tap", // 键盘模拟
+  pkCreateBrowserWindow: "pk:bw:create", // 创建子窗口
+  pkCreateBrowserWindowSync: "pk:bw:create-sync", // 同步创建子窗口
   pkBwSend: "pk:bw:send", // 向已创建的子窗口 webContents 发消息
-  pkDialogOpenSync: "pk:dialog:open-sync", // utools.showOpenDialog（同步 IPC）
-  pkDialogSaveSync: "pk:dialog:save-sync", // utools.showSaveDialog（同步 IPC）
+  pkDialogOpenSync: "pk:dialog:open-sync", // 同步打开对话框
+  pkDialogSaveSync: "pk:dialog:save-sync", // 同步保存对话框
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

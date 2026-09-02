@@ -24,13 +24,11 @@ function resolveSearchPage(): { url?: string; file?: string } {
 
 export function createMainWindow(): BrowserWindow {
   win = new BrowserWindow({
-    // uTools 式固定面板：不拉伸、不最小化，尺寸恒定
+    // 搜索面板的初始尺寸；插件视图进入时可扩展，退出后恢复此前尺寸。
     width: 802,
     height: 418,
     minWidth: 802,
     minHeight: 418,
-    maxWidth: 802,
-    maxHeight: 418,
     resizable: false,
     show: false,
     frame: false,
@@ -83,9 +81,9 @@ export function setMainWindowResizeHandler(cb: () => void): void {
 export function showMainWindow(): void {
   if (!win) return;
   if (!win.isVisible()) {
-    const { workArea } = screen.getPrimaryDisplay();
+    const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const [w] = win.getSize();
-    // uTools 式：屏幕上方约 15% 处垂直居中
+    // 面板在主显示器工作区顶部附近显示。
     win.setPosition(
       Math.round(workArea.x + (workArea.width - w) / 2),
       workArea.y + Math.round(workArea.height * 0.15),

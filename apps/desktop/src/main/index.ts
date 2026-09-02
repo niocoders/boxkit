@@ -9,7 +9,7 @@ import { initCrash } from "./services/crash.js";
 import { applyHotkey, unregisterAll } from "./services/hotkey.js";
 import { applyAutostart } from "./services/autostart.js";
 import { createTray, destroyTray } from "./services/tray.js";
-import { initUpdater, SMOKING } from "./services/updater.js";
+import { checkForUpdates, initUpdater, SMOKING } from "./services/updater.js";
 import { pluginManager } from "./plugins/manager.js";
 import { commitInstall } from "./plugins/staging.js";
 import { marketService } from "./services/market.js";
@@ -17,6 +17,8 @@ import { usageFlush } from "./core/usage.js";
 import { cleanupStaging } from "./plugins/staging.js";
 import { PluginHost } from "./plugins/host.js";
 import { appProvider } from "./providers/apps.js";
+import { fileProvider } from "./providers/files.js";
+import { clipboardHistoryProvider } from "./providers/clipboardHistory.js";
 import {
   createMainWindow,
   getMainWindow,
@@ -92,6 +94,8 @@ function bootstrap(): void {
     unregisterAll();
     pluginManager.flushAllDb();
     usageFlush();
+    if (clipboardTimer) clearInterval(clipboardTimer);
+    clipboardHistoryProvider.flush();
     destroyTray();
   });
 
@@ -104,6 +108,22 @@ let pluginHost: PluginHost;
 let appReady = false;
 let pendingMarketUrl: string | null = null;
 let pendingPluginPackage: string | null = null;
+
+let clipboardTimer: NodeJS.Timeout | null = null;
+
+function syncClipboardPolling(): void {
+  if (clipboardTimer) {
+    clearInterval(clipboardTimer);
+    clipboardTimer = null;
+  }
+  if (!settings.get().clipboardHistoryEnabled) return;
+  clipboardTimer = setInterval(() => {
+    const before = clipboardHistoryProvider.getItems({ limit: 1 })[0]?.id;
+    void clipboardHistoryProvider.captureSystemClipboard().then((item) => {
+      if (item && item.id !== before) sendToMainWindow(IPC.clipboardHistoryChanged, null);
+    });
+  }, 1200);
+}
 
 /** 处理插件包打开请求：进入统一暂存 + 权限确认流程。 */
 function handleBkxPath(filePath?: string): void {
@@ -162,9 +182,13 @@ function onReady(): void {
   if (process.platform === "darwin" && app.dock) app.dock.hide();
 
   settings.load();
+  clipboardHistoryProvider.load();
   settings.onChange(() => {
     applyAutostart();
+    syncClipboardPolling();
+    if (!settings.get().clipboardHistoryEnabled) clipboardHistoryProvider.clear();
   });
+  syncClipboardPolling();
 
   // 主窗
   createMainWindow();
@@ -179,6 +203,9 @@ function onReady(): void {
   });
   pluginHost.onStateChange((s) => sendToMainWindow(IPC.pluginState, s));
   pluginManager.onChange(() => sendToMainWindow(IPC.pluginChanged, null));
+  appProvider.onChange(() => sendToMainWindow(IPC.searchDataChanged, null));
+  fileProvider.onChange(() => sendToMainWindow(IPC.searchDataChanged, null));
+  clipboardHistoryProvider.onChange(() => sendToMainWindow(IPC.clipboardHistoryChanged, null));
 
   registerIpc({
     pluginHost,
@@ -191,6 +218,7 @@ function onReady(): void {
 
   // 应用扫描（后台）
   void appProvider.rescan();
+  void fileProvider.rescan();
 
   // 托盘 / 自启 / 快捷键 / 更新
   createTray({
@@ -198,6 +226,7 @@ function onReady(): void {
     onSettings: openSettingsWindow,
     onCheckUpdate: () => {
       openSettingsWindow();
+      void checkForUpdates(false);
     },
     onQuit: () => app.quit(),
   });

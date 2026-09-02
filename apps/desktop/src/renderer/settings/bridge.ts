@@ -14,6 +14,7 @@ export interface SettingsBridge {
     list(): Promise<PluginListItem[]>;
     installPreview(): Promise<{ preview: InstallPreview; conflict: string } | null>;
     installConfirm(stagingId: string): Promise<{ ok: boolean; name?: string; error?: string }>;
+    installCancel(stagingId: string): Promise<{ ok: boolean; error?: string }>;
     enable(name: string): void;
     disable(name: string): void;
     uninstall(name: string): Promise<{ ok: boolean; error?: string }>;

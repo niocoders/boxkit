@@ -7,12 +7,15 @@ import type { AppSettings } from "@boxkit/shared";
 const DEFAULTS: AppSettings = {
   hotkey: process.platform === "darwin" ? "Option+Space" : "Alt+Space",
   autostart: false,
-  sentryEnabled: true,
+  sentryEnabled: false,
   updateFeed: null,
   firstLaunchAt: Date.now(),
   disabledPlugins: [],
   devPluginPaths: [],
   marketUrl: null,
+  pinnedIds: [],
+  clipboardHistoryEnabled: false,
+  clipboardHistoryLimit: 50,
 };
 
 type Listener = (s: AppSettings) => void;

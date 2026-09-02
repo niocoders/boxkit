@@ -3,10 +3,19 @@
   "version": "1.0.0",
   "private": true,
   "description": "BoxKit 桌面应用（Electron 主进程 + 渲染层）",
+  "license": "MIT",
   "author": "BoxKit Authors <dev@boxkit.app>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/niocoders/boxkit.git",
+    "directory": "apps/desktop"
+  },
+  "bugs": {
+    "url": "https://github.com/niocoders/boxkit/issues"
+  },
+  "homepage": "https://github.com/niocoders/boxkit#readme",
   "main": "dist/main/index.js",
   "desktopName": "boxkit.desktop",
-  "homepage": "https://github.com/niocoders/boxkit",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",

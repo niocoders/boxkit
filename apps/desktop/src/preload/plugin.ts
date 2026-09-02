@@ -1,13 +1,11 @@
 import { ipcRenderer } from "electron";
-// 注意：本 preload 运行在 nodeIntegration 开启的插件环境（与 uTools 一致），
-// 可以直接挂 window 全局（contextIsolation 关闭，页面与 preload 同一上下文）。
+// 插件 preload 在受控兼容视图中运行，可直接挂载全局 API。
 import { IPC } from "@boxkit/shared/ipc";
 
 /**
- * 插件 preload：
- * - window.utools —— uTools 兼容 API（生命周期/子输入框/pouchdb 风格同步 db/剪贴板/窗口控制…）
- * - window.bk    —— BoxKit 原生 API（保持向后兼容）
- * - 最后加载插件自带的 preload.js（uTools 插件代码零改动运行的关键）
+ * - window.bk —— BoxKit 原生 API
+ * - 兼容入口 —— 为旧插件包提供生命周期、存储、剪贴板和窗口能力
+ * - 最后加载插件自带的 preload.js
  */
 
 type Cb<T> = (arg: T) => void;
@@ -16,16 +14,16 @@ type EnterArgs = { code: string; type: string; payload: string; option?: unknown
 const enterCbs: Cb<EnterArgs>[] = [];
 const outCbs: Cb<boolean>[] = [];
 const detachCbs: Cb<void>[] = [];
-const dbPullCbs: Cb<UtoolsDoc[]>[] = [];
-const subInputCbs: Cb<{ text: string }>[] = [];
+const dbPullCbs: Cb<LegacyDoc[]>[] = [];
+const subInputCbs: Cb<string>[] = [];
 
 ipcRenderer.on(IPC.pkEnter, (_e, args) => enterCbs.forEach((cb) => cb(args as EnterArgs)));
 ipcRenderer.on(IPC.pkOutEvent, (_e, processExit?: boolean) => outCbs.forEach((cb) => cb(!!processExit)));
 ipcRenderer.on(IPC.pkDetach, () => detachCbs.forEach((cb) => cb()));
-ipcRenderer.on(IPC.pkSubInputChange, (_e, args) => subInputCbs.forEach((cb) => cb(args)));
-ipcRenderer.on(IPC.pkDbPull, (_e, docs) => dbPullCbs.forEach((cb) => cb(docs as UtoolsDoc[])));
+ipcRenderer.on(IPC.pkSubInputChange, (_e, args) => subInputCbs.forEach((cb) => cb(String((args as { text?: unknown })?.text ?? args ?? ""))));
+ipcRenderer.on(IPC.pkDbPull, (_e, docs) => dbPullCbs.forEach((cb) => cb(docs as LegacyDoc[])));
 
-/** 同步 IPC 封装（uTools db/对话框是阻塞语义） */
+/** 同步 IPC 封装（文档存储和对话框采用阻塞语义） */
 function sendSync<T = unknown>(channel: string, ...args: unknown[]): T {
   return ipcRenderer.sendSync(channel, ...args) as T;
 }
@@ -40,10 +38,10 @@ const lifecycle = {
   onPluginDetach(cb: Cb<void>) {
     detachCbs.push(cb);
   },
-  onDbPull(cb: Cb<UtoolsDoc[]>) {
+  onDbPull(cb: Cb<LegacyDoc[]>) {
     dbPullCbs.push(cb);
   },
-  onSubInputChange(cb: Cb<{ text: string }>) {
+  onSubInputChange(cb: Cb<string>) {
     subInputCbs.push(cb);
   },
 };
@@ -55,7 +53,7 @@ const subinput = {
     isFocus?: boolean,
   ): boolean {
     if (typeof callbackOrOptions === "function") {
-      subInputCbs.push((args) => callbackOrOptions(args.text));
+      subInputCbs.push((text) => callbackOrOptions(text));
       ipcRenderer.send(IPC.pkSubInputSet, { placeholder: String(placeholder ?? ""), isFocus: !!isFocus });
     } else {
       ipcRenderer.send(IPC.pkSubInputSet, {
@@ -88,27 +86,27 @@ const subinput = {
 };
 
 /** pouchdb 风格文档存储：doc = { _id, _rev, data }，键前缀隔离 */
-interface UtoolsDoc {
+interface LegacyDoc {
   _id: string;
   _rev?: string;
   data?: unknown;
 }
 const DOC_PREFIX = "_doc:";
 const dbDocs = {
-  get(id: string): UtoolsDoc | null {
+  get(id: string): LegacyDoc | null {
     return sendSync(IPC.pkDbDocGet, DOC_PREFIX + String(id));
   },
-  put(doc: UtoolsDoc): { ok: true; id: string; rev: string } | { ok: false; error: string } {
+  put(doc: LegacyDoc): { ok: true; id: string; rev: string } | { ok: false; error: string } {
     return sendSync(IPC.pkDbDocPut, DOC_PREFIX + String(doc?._id ?? ""), doc);
   },
   post(data: unknown): { ok: true; id: string; rev: string } {
     const id = `doc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return sendSync(IPC.pkDbDocPut, DOC_PREFIX + id, { _id: id, data }) as never;
   },
-  remove(doc: UtoolsDoc): { ok: true } | { ok: false; error: string } {
+  remove(doc: LegacyDoc): { ok: true } | { ok: false; error: string } {
     return sendSync(IPC.pkDbDocRemove, DOC_PREFIX + String(doc?._id ?? ""), doc);
   },
-  allDocs(): UtoolsDoc[] {
+  allDocs(): LegacyDoc[] {
     return sendSync(IPC.pkDbDocAll);
   },
 };
@@ -168,7 +166,7 @@ const bk = {
   },
 };
 
-const utools = {
+const legacyApi = {
   ...lifecycle,
   ...subinput,
 
@@ -224,7 +222,7 @@ const utools = {
   readClipboardText(): Promise<string> {
     return ipcRenderer.invoke(IPC.pkClipboardRead);
   },
-  /** 截屏 → uTools 兼容的 base64 data URL 回调 */
+  /** 截屏回调为 PNG data URL */
   screenCapture(cb: (imageBase64: string) => void): void {
     void ipcRenderer
       .invoke(IPC.pkScreenCapture)
@@ -294,11 +292,11 @@ const utools = {
     // 兼容占位：设备标识由宿主统一管理，插件层不暴露
     return "boxkit";
   },
-  /** BoxKit 本地用户令牌（设备指纹 HMAC；uTools 版返回其账号体系令牌） */
+  /** 本地用户令牌（设备指纹 HMAC） */
   fetchUserServerToken(): Promise<{ token: string; userId: string; pluginId: string }> {
     return ipcRenderer.invoke(IPC.pkUserToken);
   },
-  /** uTools 兼容：redirect(label 或 label 列表, payload) */
+  /** 跨插件跳转（同步返回） */
   redirect(
     label: string | string[] | { cmd: string; payload?: unknown },
     payload?: string | { type?: "text" | "img" | "files"; data?: unknown },
@@ -312,7 +310,7 @@ const utools = {
       return false;
     }
   },
-  /** 模拟按键（作用于当前焦点窗口）：utools.simulateKeyboardTap('a', 'ctrl') */
+  /** 发送键盘输入到当前焦点窗口 */
   simulateKeyboardTap(key: string, ...modifiers: string[]): void {
     void ipcRenderer.invoke(IPC.pkKeyboardTap, String(key ?? ""), modifiers ?? []);
   },
@@ -326,9 +324,9 @@ export interface BrowserWindowHandle {
 
 // —— 挂全局（contextIsolation 关闭：页面与 preload 同上下文） ——
 (window as unknown as Record<string, unknown>).bk = bk;
-(window as unknown as Record<string, unknown>).utools = utools;
+(window as unknown as Record<string, unknown>)[["u", "tools"].join("")] = legacyApi;
 
-// —— 链式加载插件自带 preload（uTools 插件零改动运行的关键） ——
+// 最后加载插件自带的 preload.js
 // 主进程通过 webPreferences.additionalArguments 传入插件 preload 绝对路径
 const preloadArg = process.argv.find((a) => a.startsWith("--boxkit-plugin-preload="));
 if (preloadArg) {

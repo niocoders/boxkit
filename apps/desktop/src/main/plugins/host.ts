@@ -80,6 +80,8 @@ export class PluginHost {
   private pendingEnter = new Map<string, EnterPayload>();
   private prePluginSize: { width: number; height: number } | null = null;
   private pendingScreenShot: Buffer | null = null;
+  private pendingScreenShotOwner: string | null = null;
+  private screenCaptureOwners = new Map<number, string>();
   private childOwners = new Map<number, string>();
   private stateListeners = new Set<(s: PluginModeState) => void>();
 
@@ -254,7 +256,7 @@ export class PluginHost {
 
     const view = new WebContentsView({
       webPreferences: {
-        // uTools 兼容运行模型：插件页面/预载具备 Node 能力、与 preload 同上下文
+        // 兼容视图：插件页面/预载具备 Node 能力、与 preload 同上下文
         preload: this.preloadPath,
         nodeIntegration: true,
         contextIsolation: false,
@@ -369,9 +371,9 @@ export class PluginHost {
 
   private requirePermission(p: LoadedPlugin | null, perm: PluginPermission): LoadedPlugin {
     if (!p) throw new Error("不在有效的插件环境中");
-    // 原生 uTools 清单通常没有 BoxKit permissions 字段；兼容模式按 uTools 的安装信任模型放行。
-    const legacyUtools = p.manifest.pluginName !== undefined && p.manifest.permissions.length === 0;
-    if (!legacyUtools && !p.manifest.permissions.includes(perm)) {
+    // 没有宿主权限字段的 legacy 清单按安装信任模型放行。
+    const legacyManifest = p.manifest.pluginName !== undefined && p.manifest.permissions.length === 0;
+    if (!legacyManifest && !p.manifest.permissions.includes(perm)) {
       throw new Error(`插件未声明权限: ${perm}`);
     }
     return p;
@@ -436,7 +438,7 @@ export class PluginHost {
       return this.manager.db(p.manifest.name).all();
     });
 
-    // uTools 文档 DB：同步 API，保留文档字段并提供轻量 _rev 冲突检测。
+    // 同步文档存储：保留文档字段并提供轻量 _rev 冲突检测。
     ipcMain.on(IPC.pkDbDocGet, (e, key: string) => {
       const p = this.requirePermission(this.senderPlugin(e), "db");
       e.returnValue = this.manager.db(p.manifest.name).get(String(key));
@@ -569,7 +571,7 @@ export class PluginHost {
       if (!img.isEmpty()) (clipboard as unknown as { writeImage(i: Electron.NativeImage): void }).writeImage(img);
     });
 
-    // uTools 兼容：剪贴板图片（PNG buffer）
+    // 兼容图片能力
     ipcMain.handle(IPC.pkClipboardWriteImage, (e, png: Buffer) => {
       this.requirePermission(this.senderPlugin(e), "clipboard");
       const img = nativeImage.createFromBuffer(Buffer.from(png));
@@ -582,11 +584,11 @@ export class PluginHost {
       return img.isEmpty() ? null : img.toPNG();
     });
 
-    // ————— uTools 兼容：screenCapture（区域裁剪） —————
-    // 流程：抓主屏全图 → 隐藏主窗 → 全屏遮罩拖拽选区 → 按选区裁剪 → PNG 回调；Esc 取消
+    // 区域截图能力：抓取全屏图后显示遮罩供用户选择
     ipcMain.handle(IPC.pkScreenCapture, async (e) => {
-      this.requirePermission(this.senderPlugin(e), "screen");
+      const owner = this.requirePermission(this.senderPlugin(e), "screen");
       this.pendingScreenShot = await this.grabScreenBuffer();
+      this.pendingScreenShotOwner = owner.manifest.name;
       const dataUrl = `data:image/png;base64,${this.pendingScreenShot.toString("base64")}`;
       const main = getMainWindow();
       const wasVisible = main?.isVisible() ?? false;
@@ -603,6 +605,7 @@ export class PluginHost {
         show: false,
         webPreferences: { nodeIntegration: true, contextIsolation: false },
       });
+      this.screenCaptureOwners.set(overlay.webContents.id, owner.manifest.name);
       let settled = false;
       const done = (b: Buffer) => {
         if (!settled) {
@@ -612,32 +615,53 @@ export class PluginHost {
         }
         return Buffer.alloc(0);
       };
+      let removeResultListener = () => {};
       const resultP = new Promise<Buffer>((resolve) => {
-        ipcMain.once("pk:screen-capture-result", (_ev, buf: Buffer) => {
+        const onResult = (event: Electron.IpcMainEvent, buf: Buffer) => {
+          if (event.sender !== overlay.webContents) return;
+          removeResultListener();
           settled = true;
           resolve(Buffer.from(buf));
+          this.screenCaptureOwners.delete(overlay.webContents.id);
+          this.pendingScreenShot = null;
+          this.pendingScreenShotOwner = null;
           overlay.destroy();
           if (wasVisible) main?.show();
-        });
+        };
+        ipcMain.on("pk:screen-capture-result", onResult);
+        removeResultListener = () => ipcMain.removeListener("pk:screen-capture-result", onResult);
         overlay.on("closed", () => {
+          removeResultListener();
           if (!settled) {
             settled = true;
+            this.screenCaptureOwners.delete(overlay.webContents.id);
             this.pendingScreenShot = null;
+            this.pendingScreenShotOwner = null;
             resolve(Buffer.alloc(0));
             if (wasVisible) main?.show();
           }
         });
       });
-      await overlay.loadURL(this.screenCaptureOverlayHtml(dataUrl));
-      overlay.show();
+      try {
+        await overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(this.screenCaptureOverlayHtml(dataUrl))}`);
+        overlay.show();
+      } catch (error) {
+        removeResultListener();
+        this.screenCaptureOwners.delete(overlay.webContents.id);
+        this.pendingScreenShot = null;
+        this.pendingScreenShotOwner = null;
+        overlay.destroy();
+        if (wasVisible) main?.show();
+        throw error;
+      }
       const png = await resultP;
       return png;
     });
 
-    // ————— uTools 兼容：simulateKeyboardTap —————
-    // PowerShell SendKeys 注入组合键（作用于当前焦点窗口）
+    // 兼容键盘输入能力
     ipcMain.handle(IPC.pkKeyboardTap, async (e, key: string, modifiers: string[]) => {
       this.requirePermission(this.senderPlugin(e), "window");
+      if (process.platform !== "win32") throw new Error("当前平台不支持键盘模拟");
       const mod = Array.isArray(modifiers) ? modifiers.map((m) => String(m).toLowerCase()) : [];
       let seq = "";
       if (mod.includes("ctrl")) seq += "^";
@@ -665,7 +689,7 @@ export class PluginHost {
       });
     });
 
-    // ————— uTools 兼容：createBrowserWindow —————
+    // 创建归属当前插件的子窗口
     const childWindows = new Map<number, BrowserWindow>();
 
     const createChildWindow = (
@@ -716,7 +740,7 @@ export class PluginHost {
         e.returnValue = createChildWindow(e, args);
       } catch (error) {
         e.returnValue = null;
-        logger.warn("plugins", "创建 uTools 子窗口失败", error);
+        logger.warn("plugins", "创建子窗口失败", error);
       }
     });
 
@@ -784,8 +808,7 @@ export class PluginHost {
       return { ok: true };
     });
 
-    // ————— uTools 兼容：fetchUserServerToken（BoxKit 本地用户令牌） —————
-    // uTools 返回其账号体系令牌；BoxKit 无账号体系，签发基于设备指纹的本地稳定令牌。
+    // 本地用户令牌：设备指纹 HMAC
     ipcMain.handle(IPC.pkUserToken, (e) => {
       const p = this.requirePermission(this.senderPlugin(e), "shell");
       const mid = getMachineId();
@@ -796,9 +819,13 @@ export class PluginHost {
       return { token, userId: mid, pluginId: p.manifest.name };
     });
 
-    // ————— uTools 兼容：screenCapture 区域裁剪（overlay 选区回传） —————
+    // 选区回传：只接受与当前遮罩绑定的 sender
     ipcMain.on(IPC.pkScreenCaptureRegion, (e, rect: { x: number; y: number; width: number; height: number }) => {
-      this.requirePermission(this.senderPlugin(e), "screen");
+      const owner = this.screenCaptureOwners.get(e.sender.id);
+      if (!owner || owner !== this.pendingScreenShotOwner) {
+        e.returnValue = Buffer.alloc(0);
+        return;
+      }
       e.returnValue = this.resolveScreenCaptureRegion(rect);
     });
   }
@@ -815,6 +842,7 @@ export class PluginHost {
       height: Math.max(1, Math.round(rect.height * dpr)),
     });
     this.pendingScreenShot = null;
+    this.pendingScreenShotOwner = null;
     return crop.toPNG();
   }
 

@@ -52,6 +52,12 @@ const vite = await createServer({
   root: path.join(appRoot, "src/renderer"),
   base: "/",
   plugins: [react()],
+  resolve: {
+    alias: {
+      "@boxkit/shared": path.join(repoRoot, "packages/shared/src/index.ts"),
+      "@boxkit/sdk": path.join(repoRoot, "packages/sdk/src/index.ts"),
+    },
+  },
   server: { port: 5173, strictPort: true },
 });
 await vite.listen();

@@ -1,0 +1,28 @@
+# BoxKit NOTICE
+
+Copyright (c) 2026 BoxKit Authors.
+
+BoxKit is distributed under the MIT License. The complete license text is in
+[`LICENSE`](LICENSE).
+
+## Names and compatibility
+
+BoxKit is an independent, community-maintained project. It is not sponsored,
+endorsed, or affiliated with any third-party product or its owner.
+
+The names **uTools** and related product names are trademarks of their
+respective owners. BoxKit uses those names only to identify the legacy plugin
+interfaces that its compatibility adapter can accept. Compatibility does not
+mean that BoxKit is an official implementation, replacement, or distribution
+of that product.
+
+## Third-party software
+
+BoxKit bundles or depends on third-party software under licenses other than
+MIT. Their copyright notices and license identifiers remain applicable to the
+corresponding components. The direct dependency inventory and license-family
+summary are maintained in
+[`docs/third-party-licenses.md`](docs/third-party-licenses.md); the lockfiles
+are the version and integrity records for the installed dependency graph.
+
+This notice does not change the terms of any third-party license.

@@ -10,6 +10,15 @@ export interface BoxkitBridge {
   exitPlugin(): void;
   onPluginState(cb: (s: PluginModeState) => void): () => void;
   onPluginChanged(cb: () => void): () => void;
+  onSearchDataChanged?(cb: () => void): () => void;
+  favorites?: {
+    get(): Promise<{ ids: string[] }>;
+    pin(id: string): Promise<{ ids: string[] }>;
+    unpin(id: string): Promise<{ ids: string[] }>;
+  };
+  clipboardHistory?: {
+    capture(capture: unknown): Promise<unknown>;
+  };
   onToast(cb: (msg: string) => void): () => void;
 }
 

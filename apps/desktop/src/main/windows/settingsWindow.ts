@@ -4,35 +4,46 @@ import { IPC } from "@boxkit/shared";
 
 let win: BrowserWindow | null = null;
 let pendingInstallPreview: unknown = null;
+let pendingShowTab: unknown = null;
 
 export function getSettingsWindow(): BrowserWindow | null {
   return win && !win.isDestroyed() ? win : null;
 }
 
-function flushInstallPreview(): void {
+function flushPendingMessages(): void {
   const target = getSettingsWindow();
-  if (!target || target.webContents.isLoadingMainFrame() || !pendingInstallPreview) return;
+  if (!target || target.webContents.isLoadingMainFrame()) return;
   target.show();
   target.focus();
-  target.webContents.send(IPC.settingsInstallPreview, pendingInstallPreview);
-  pendingInstallPreview = null;
+  if (pendingShowTab !== null) {
+    target.webContents.send(IPC.settingsShowTab, pendingShowTab);
+    pendingShowTab = null;
+  }
+  if (pendingInstallPreview !== null) {
+    target.webContents.send(IPC.settingsInstallPreview, pendingInstallPreview);
+    pendingInstallPreview = null;
+  }
 }
 
 /** 将协议导入的待确认安装可靠地投递给设置页。 */
 export function queueInstallPreview(payload: unknown): void {
   pendingInstallPreview = payload;
-  const target = getSettingsWindow();
-  if (!target) {
-    openSettingsWindow();
-    return;
-  }
-  flushInstallPreview();
+  openSettingsWindow();
+  flushPendingMessages();
+}
+
+/** 将主面板的设置/市场跳转可靠地投递给设置页。 */
+export function queueSettingsShowTab(payload: unknown): void {
+  pendingShowTab = payload;
+  openSettingsWindow();
+  flushPendingMessages();
 }
 
 export function openSettingsWindow(): void {
   if (win && !win.isDestroyed()) {
     win.show();
     win.focus();
+    flushPendingMessages();
     return;
   }
   win = new BrowserWindow({
@@ -57,7 +68,7 @@ export function openSettingsWindow(): void {
   void (devUrl
     ? win.loadURL(`${devUrl}/settings/index.html`)
     : win.loadFile(path.join(__dirname, "../renderer/settings/index.html")));
-  win.webContents.on("did-finish-load", flushInstallPreview);
+  win.webContents.on("did-finish-load", flushPendingMessages);
   win.once("ready-to-show", () => win?.show());
   win.on("closed", () => {
     win = null;

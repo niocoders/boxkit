@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   AppSettings,
   InstallPreview,
@@ -21,6 +21,7 @@ export function App() {
   const [pluginView, setPluginView] = useState<"installed" | "market">("installed");
   const [toast, setToast] = useState<string | null>(null);
   const [protocolPreview, setProtocolPreview] = useState<{ preview: InstallPreview; conflict: string } | null>(null);
+  const [marketRefreshKey, setMarketRefreshKey] = useState(0);
 
   useEffect(() => {
     return boxkit.onSettingsShowTab((p) => {
@@ -72,6 +73,8 @@ export function App() {
             onViewChange={setPluginView}
             initialPreview={protocolPreview}
             onInitialPreviewConsumed={() => setProtocolPreview(null)}
+            onMarketRefresh={() => setMarketRefreshKey((key) => key + 1)}
+            marketRefreshKey={marketRefreshKey}
           />
         )}
         {tab === "about" && <AboutView />}
@@ -122,17 +125,48 @@ function GeneralView({ showToast }: { showToast: (m: string) => void }) {
           </div>
           <Toggle
             on={cfg.autostart}
+            label="开机自启"
             onChange={(v) => void save({ autostart: v })}
           />
         </div>
         <div className="row">
           <div>
             <div className="row-title">崩溃与异常上报</div>
-            <div className="row-desc">帮助改进稳定性；始终仅在本地保留日志</div>
+            <div className="row-desc">帮助改进稳定性；仅在配置了上报地址且开启后发送最小化崩溃信息</div>
           </div>
           <Toggle
             on={cfg.sentryEnabled}
+            label="崩溃与异常上报"
             onChange={(v) => void save({ sentryEnabled: v })}
+          />
+        </div>
+        <div className="row">
+          <div>
+            <div className="row-title">剪贴板历史</div>
+            <div className="row-desc">默认关闭；开启后仅保存受限大小的非敏感内容和文件路径</div>
+          </div>
+          <Toggle
+            on={cfg.clipboardHistoryEnabled}
+            label="剪贴板历史"
+            onChange={(v) => void save({ clipboardHistoryEnabled: v })}
+          />
+        </div>
+        <div className="row">
+          <div>
+            <div className="row-title">剪贴板历史条数</div>
+            <div className="row-desc">限制本机保存的历史记录数量（1 到 200）</div>
+          </div>
+          <input
+            className="number-input"
+            type="number"
+            min={1}
+            max={200}
+            value={cfg.clipboardHistoryLimit}
+            onChange={(e) => {
+              const value = Number(e.target.value);
+              if (Number.isFinite(value)) void save({ clipboardHistoryLimit: value });
+            }}
+            aria-label="剪贴板历史条数"
           />
         </div>
         <div className="row">
@@ -154,7 +188,7 @@ function GeneralView({ showToast }: { showToast: (m: string) => void }) {
   );
 }
 
-/** uTools 式快捷键录制控件：点击开始，按下组合键完成，Esc 取消 */
+/** 快捷键录制控件：点击开始，按下组合键完成，Esc 取消 */
 function HotkeyRecorder({ value, onSave }: { value: string; onSave: (v: string) => void }) {
   const [recording, setRecording] = useState(false);
 
@@ -228,23 +262,33 @@ function FeedEdit({ value, onSave }: { value: string; onSave: (v: string) => voi
   );
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
-    <button className={`toggle ${on ? "on" : ""}`} onClick={() => onChange(!on)}>
+    <button
+      className={`toggle ${on ? "on" : ""}`}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      title={label}
+      onClick={() => onChange(!on)}
+    >
       <span className="knob" />
     </button>
   );
 }
 
-// ————— 插件市场（uTools 风格卡片） —————
+// ————— 插件市场卡片 —————
 
 function MarketView({
   showToast,
   onInstall,
+  reloadInstalled,
+  refreshKey,
 }: {
   showToast: (m: string) => void;
   onInstall: (pluginId: string) => Promise<void>;
   reloadInstalled: () => void;
+  refreshKey: number;
 }) {
   const [keyword, setKeyword] = useState("");
   const [list, setList] = useState<MarketPlugin[] | null>(null);
@@ -253,12 +297,17 @@ function MarketView({
 
   const fetchList = async (kw: string) => {
     setError(null);
-    const r = await boxkit.market.fetch(kw);
-    if ("error" in r) {
-      setError(r.error);
+    try {
+      const r = await boxkit.market.fetch(kw);
+      if ("error" in r) {
+        setError(r.error);
+        setList([]);
+      } else {
+        setList(r);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "无法连接插件市场");
       setList([]);
-    } else {
-      setList(r);
     }
   };
 
@@ -266,6 +315,11 @@ function MarketView({
     void fetchList("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (refreshKey > 0) void fetchList(keyword);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   return (
     <>
@@ -329,8 +383,11 @@ function MarketView({
                 disabled={installing === m.pluginId}
                 onClick={async () => {
                   setInstalling(m.pluginId);
-                  await onInstall(m.pluginId);
-                  setInstalling(null);
+                  try {
+                    await onInstall(m.pluginId);
+                  } finally {
+                    setInstalling(null);
+                  }
                 }}
               >
                 {installing === m.pluginId ? "处理中…" : m.updatable ? "更新" : m.installed ? "重装" : "安装"}
@@ -351,15 +408,21 @@ function PluginsView({
   onViewChange,
   initialPreview,
   onInitialPreviewConsumed,
+  onMarketRefresh,
+  marketRefreshKey,
 }: {
   showToast: (m: string) => void;
   view: "installed" | "market";
   onViewChange: (v: "installed" | "market") => void;
   initialPreview: { preview: InstallPreview; conflict: string } | null;
   onInitialPreviewConsumed: () => void;
+  onMarketRefresh: () => void;
+  marketRefreshKey: number;
 }) {
   const [items, setItems] = useState<PluginListItem[] | null>(null);
   const [pending, setPending] = useState<{ preview: InstallPreview; conflict: string } | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
 
   const reload = () => void boxkit.plugins.list().then(setItems);
 
@@ -373,6 +436,26 @@ function PluginsView({
       onInitialPreviewConsumed();
     }
   }, [initialPreview, onInitialPreviewConsumed]);
+
+  useEffect(() => {
+    if (!pending) return;
+    confirmRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        void cancelPending();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [pending]);
+
+  const cancelPending = async () => {
+    const current = pending;
+    setPending(null);
+    setInstallError(null);
+    if (current) await boxkit.plugins.installCancel(current.preview.stagingId);
+  };
 
   if (items === null) return <div className="loading">加载中…</div>;
 
@@ -447,6 +530,7 @@ function PluginsView({
                 <div className="p-actions">
                   <Toggle
                     on={p.enabled}
+                    label={`${p.displayName} 开关`}
                     onChange={(v) => {
                       if (v) boxkit.plugins.enable(p.name);
                       else boxkit.plugins.disable(p.name);
@@ -478,13 +562,18 @@ function PluginsView({
           </section>
         </>
       ) : (
-        <MarketView showToast={showToast} onInstall={installFromMarket} reloadInstalled={reload} />
+        <MarketView
+          showToast={showToast}
+          onInstall={installFromMarket}
+          reloadInstalled={reload}
+          refreshKey={marketRefreshKey}
+        />
       )}
 
       {pending && (
-        <div className="modal-mask" onClick={() => setPending(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>安装插件</h3>
+        <div className="modal-mask" role="presentation" onClick={() => void cancelPending()}>
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="install-dialog-title" onClick={(e) => e.stopPropagation()}>
+            <h3 id="install-dialog-title">安装插件</h3>
             <div className="modal-plugin">
               {pending.preview.logo ? (
                 <img src={pending.preview.logo} className="p-logo" alt="" />
@@ -517,16 +606,26 @@ function PluginsView({
               )}
             </div>
             <div className="modal-actions">
-              <button className="btn" onClick={() => setPending(null)}>
+              {installError && <div className="warn-line" role="alert">{installError}</div>}
+              <button className="btn" onClick={() => void cancelPending()}>
                 取消
               </button>
               <button
+                ref={confirmRef}
                 className="btn primary"
                 onClick={async () => {
-                  const r = await boxkit.plugins.installConfirm(pending.preview.stagingId);
-                  setPending(null);
-                  showToast(r.ok ? `已安装 ${r.name}` : r.error ?? "安装失败");
-                  reload();
+                  const current = pending;
+                  if (!current) return;
+                  setInstallError(null);
+                  try {
+                    const r = await boxkit.plugins.installConfirm(current.preview.stagingId);
+                    setPending(null);
+                    showToast(r.ok ? `已安装 ${r.name}` : r.error ?? "安装失败");
+                    reload();
+                    onMarketRefresh();
+                  } catch (error) {
+                    setInstallError(error instanceof Error ? error.message : "安装失败");
+                  }
                 }}
               >
                 信任并安装

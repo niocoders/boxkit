@@ -1,222 +1,69 @@
-# BoxKit 交接文档（换机继续开发必读）
+# BoxKit 交接说明
 
-> 更新时间：2026-09-02（第五次更新：**主程序/插件独立仓 + uTools 兼容运行时**）
-> 主程序仓库：`niocoders/boxkit`（pnpm monorepo，纯客户端，不自建服务端，不内置插件源码）
-> 插件/官网/文档仓库：`niocoders/boxkit-market`（公开仓，GitHub Pages：<https://niocoders.github.io/boxkit-market/>）
-> 当前方向：兼容优先。插件保留 uTools 的 Node/preload 运行模型，安装即信任；主程序对宿主 IPC、路径、插件/子窗口 owner 做校验。
+更新时间：2026-09-02
 
----
+## 当前状态
 
-## 〇、2026-09-02 插件独立化与 uTools 兼容（本节最新）
+BoxKit 是一个 pnpm monorepo，包含 Electron 桌面应用、共享协议和插件 SDK。主程序不内置插件源码；插件源码、市场 registry、发行包和模板维护在独立的公开市场仓库。
 
-**架构决策：插件、官网、开发文档、`.bkx/.upx` 发行包全部托管在公开仓 `niocoders/boxkit-market`；主程序仓只保留客户端、安装器和插件运行时。**
+当前已完成：
 
-| 事项 | 结果 |
-|---|---|
-| 公开插件仓迁移：`plugins/clipboard-history`、`devtoolbox`、`utools-demo`、模板 → `boxkit-market` 的 `plugins/`、`template/`；公开仓独立 CI/Pages 发布 | ✅ commit `76a0975e31329bd4f182ee5d43a2049bf3de6208`，Pages workflow/build/deploy 成功 |
-| 公开仓市场构建器：固定 ZIP 时间戳、完整清单/路径/权限校验、`.bkx` 生成到 `site/`、连续构建 sha256 一致 | ✅ <https://niocoders.github.io/boxkit-market/> |
-| 主程序去内置插件：删除根 `plugins/`、`market/`、`tools/build-market.mjs`、主仓跨仓 Pages workflow；移除 `pnpm` 的 `plugins/*` workspace、electron-builder `extraResources: ../../plugins`、`PluginManager.seedOfficialPlugins()`；零插件启动合法 | ✅ 桌面包不再依赖主仓插件源码 |
-| 安装边界：支持 `.bkx/.zip/.upx`；central directory 先验 zip-slip；`main/preload/logo` 必须是根内安全相对路径；失败清理临时目录；市场下载临时包 finally 删除 | ✅ |
-| uTools 清单：保留 `pluginName/platform/homepage/pluginSetting` 和 feature/cmd 扩展字段；`minNum → minLength`；平台过滤；SDK 增加 `UtoolsApi`/`window.utools` 类型 | ✅ |
-| uTools 运行时：保留 `nodeIntegration:true/contextIsolation:false` 兼容模型；补齐 DB 文档同步 handler、通知、shell、窗口/显示器、对话框、同步剪贴板、子窗口同步创建；补 sender/permission/owner 校验；协议事件接线 | ✅ 主程序 typecheck + 25 tests 通过 |
-| 安装与协议：本地文件、市场、`boxkit-market://install/<id>` 都进入统一暂存/预览/权限确认；协议接入 `open-url`、`second-instance`、冷启动 argv；不再协议直装 | ✅ |
+- 跨平台桌面启动器、托盘、单实例和全局快捷键
+- 应用扫描、系统命令、文件搜索和网络搜索兜底
+- 最近使用、使用频率、收藏、模糊/首字母匹配
+- 可选剪贴板历史，默认关闭并过滤常见敏感内容
+- 本地插件包安装、开发目录、启停、升级、卸载和暂存确认
+- 静态市场下载、强制 SHA-256 校验、包身份/版本校验和协议导入
+- 插件会话、KV/文档存储、窗口、通知、剪贴板、屏幕和外部链接适配
+- GitHub Actions 三平台 CI 与 GitHub Releases 发布工作流
+- MIT 许可证、NOTICE、贡献指南和安全报告流程
 
-**独立仓发布流程**：在 `boxkit-market/plugins/<id>/` 改插件并 bump `plugin.json.version` → push → 公开仓 CI 校验/打包 `site/manifest.json` + `.bkx` → Pages 更新。主程序只在运行时从市场或本地包安装。
+## 可信边界
 
-**当前兼容口径**：常见 uTools 静态插件（`plugin.json` + HTML/JS/CSS + preload.js）可以保留原清单和 preload 运行；依赖 uTools 账号、云端同步、`ubrowser`/云端 API、私有后端的能力不伪造成功，需按兼容矩阵处理。Node 同构意味着安装插件即信任，manifest 权限弹窗只约束宿主 API。
+兼容视图为了支持既有插件而启用 Node/preload 能力，并关闭上下文隔离。安装插件相当于运行本地代码；manifest 权限只限制宿主 API，不构成 Node 沙箱。发布或安装插件前必须检查来源、维护者、许可证和包摘要。
 
-**本轮关键修复**：uTools 协议事件不再只是定义未接线；`.bkx` 双击不再要求用户再次手选；插件卸载/开发目录移除不会先误删开发数据；同名视图和子窗口不会跨插件发送 IPC；市场包下载临时文件会清理。
+兼容适配层只实现已列出的生命周期、子输入、数据存储、剪贴板、窗口、通知、显示器、对话框、截图和外部链接能力。账号体系、云端同步、浏览器自动化和第三方私有后端不应被描述为已实现。
 
----
-
-## 〇.1、历史进展（2026-08-30 uTools 对标）
-
-| 事项 | 结果 |
-|---|---|
-| 面板 UX：固定面板、关键字高亮、使用频率排序、最近使用、副命令展开 | ✅ |
-| 快捷键录制控件和插件市场客户端 | ✅ |
-| 三端 CI / release 流水线 | ✅ |
-
-**历史踩坑**：早期 Spring Boot 市场后台已删除；旧的服务端 API、数据库和内置官方插件描述均不再适用。
-
-## 〇.1、2026-08-30 uTools 对标进展
-
-| 事项 | 结果 |
-|---|---|
-| 面板 UX 对标 uTools：固定 760×600 不可拉伸、关键字高亮（mark 蓝）、使用频率加权排序、空输入「最近使用」（usage.json 持久化）、副命令展开（`→` 展开插件全部关键字，`←`/Esc 收起） | ✅ 冒烟 `ok:true apps:84`，测试 28/28 |
-| 快捷键录制控件（设置→通用）：点击录制→按下组合键→自动保存；globalShortcut 注册失败返回冲突提示（`configSet` 返回 `ConfigSetResult{settings, hotkeyError}`） | ✅ |
-| 插件市场客户端：设置→插件→「已安装/插件市场」分段切换；市场卡片（logo/作者/版本比对「可更新」）；安装走下载→暂存→权限确认复用链路；`marketFetch`/`marketInstall` IPC；市场地址可在设置修改（2026-08-31 起默认为 GitHub Pages 静态市场） | ✅ |
-| ~~市场后台 `server/`~~（**2026-08-31 已删除**，由 GitHub Pages 静态市场替代，见〇节） | — |
-| GitHub CI 三端：私有仓 `niocoders/boxkit`（设备码授权流程打通，token 在 `D:/workspace/boxkit/.gh-token`）；`ci.yml` 三端（typecheck/test/build/smoke）**全绿（Linux 真机冒烟通过 → C2 .desktop 解析已验证）**；`release.yml` 触发 v1.0.0 → **success，11 个资产全部产出并下载到 `D:/workspace/boxkit/ci-artifacts/` 验收通过**（arm64/x64 dmg、arm64/x64 mac.zip、AppImage、deb、NSIS exe、win zip、latest*.yml×3；dmg/ELF/deb/PE/zip 魔数与清单 sha512/size 均核对） | ✅ 三端打包闭环 |
-
-**新踩坑（接上轮编号）**：
-
-20. **Windows 命令行传 JSON 给 curl.exe 会吞引号**（Node execFileSync 也一样）→ GitHub API 400 "Problems parsing JSON"。解法：`--data-binary @file` 临时文件传 body。
-21. **GitHub 设备码授权流程**：client_id 用 GitHub CLI 公开的 `178c6fc778ccc68e1d6a`，scope `repo workflow`；本机访问 GitHub 必须走用户代理 `127.0.0.1:7897`（curl/git 都要；git 走 `HTTPS_PROXY` 环境变量即可）。
-22. `mvn` 用户全局 settings.xml 是阿里云**旧地址**（缺新包）→ 项目级 `.mvn/settings.xml` 用新地址 `https://maven.aliyun.com/repository/public`，`mvn -s` 指定，不动全局。
-23. sa-token 1.37.3 阿里云还没同步 → 用 1.39.0（API 兼容）。Java 11 不支持 record；MyBatis-Plus LambdaQueryWrapper 需要 getter（实体要手写 accessors）。
-24. H2 兼容 MySQL 模式跑 schema 注意：`user` 是 H2 保留字（表已改名 `market_user`）；`spring.sql.init.encoding: utf-8` 必须配，否则中文 Windows（GBK）下 data.sql 乱码。
-25. electron-builder Linux target 要求 package.json 有 `homepage`，否则 CI 报 "Please specify project homepage"。
-26. `pnpm/action-setup@v4` 的 `version` 入参与 package.json `packageManager` 同时存在会报 "Multiple versions of pnpm" → 删 workflow 里的 version。
-27. **Windows CWD 陷阱**：Git Bash 的 CWD 会跨命令保持，`git rm --cached`/`.gitignore` 重定向很容易写错目录；提交前务必 `git ls-tree -r HEAD` 验证没有把 `server/target` 之类带进去。
-
----
-
-## 一、当前完成度（已验证 ✅）
-
-| 模块 | 状态 | 验证方式 |
-|---|---|---|
-| monorepo 骨架（pnpm + TS + vitest） | ✅ | `pnpm typecheck` 零错误 |
-| 共享协议 `packages/shared`（IPC 通道 / plugin.json zod schema / 权限枚举 / License 验签核心） | ✅ | 单测通过 |
-| 插件 SDK 类型 `packages/sdk`（`window.bk` 全量类型） | ✅ | 编译通过 |
-| 主进程（单实例 / 托盘 / 全局快捷键 / 配置存储 / 日志） | ✅ | 冒烟 + 实际运行 |
-| 搜索系统（macOS 应用扫描 75 个、系统命令、评分排序、网络搜索兜底） | ✅ | 单测 + 实际运行 |
-| 插件系统（清单校验 / .bkx/.upx 安装暂存 / 权限确认弹窗 / uTools 兼容 WebContentsView / `bk-plugin://` 协议 / 开发目录热重载） | ✅ | 零插件可启动，插件从本地包/公开市场安装 |
-| 官方插件/模板 | → 已迁移至公开仓 `niocoders/boxkit-market` | 主仓不内置，市场 Pages 在线 |
-| 插件模板 | → 公开仓 `template/` | 独立仓维护 |
-| 授权系统（Ed25519 离线验签 / 试用期 14 天 / 设备绑定 / safeStorage 存储 / 设置页激活 UI） | ✅ | 25 个单测含 **CLI 签发↔客户端验签互操作** |
-| License CLI（`tools/license-cli`，零依赖：keygen/issue/verify/show） | ✅ | 单测调用验证 |
-| 自动更新（electron-updater 接线 + 本地更新服务器示例 `tools/update-server`） | ⚠️ 代码就绪，**端到端未测** | — |
-| 崩溃上报（Sentry 主进程接入 + 本地 crash 日志兜底，设置页开关） | ⚠️ 代码就绪，无 DSN 未实测 | 启动日志确认降级逻辑正确 |
-| 应用图标 / 托盘模板图标（纯 Node PNG 编码器生成） | ✅ | 文件已生成 |
-| 插件兼容 preload（15KB 级，兼容模式允许 Node） | ✅ | 构建产物确认 |
-
-**测试基线：`pnpm test` → 25/25 通过；`pnpm typecheck` → 干净；`BOXKIT_SMOKE=1` 冒烟输出：**
-```json
-{"ok":true,"apps":75,"plugins":["clipboard-history","devtoolbox"],"license":"trial","mainWindow":true,"hotkey":"Option+Space","platform":"darwin/arm64","version":"1.0.0"}
-```
-
----
-
-## 二、新机器环境准备
-
-1. **Node ≥ 20**（用到内置 crypto、`fs.cpSync`）、**pnpm ≥ 10**（`pnpm -v` 检查）
-2. 克隆/拷贝整个 `boxkit/` 目录后，根目录执行：
-   ```bash
-   pnpm install
-   ```
-   ⚠️ **Electron 二进制下载大概率要走镜像**（本机 GitHub 直连失败过一次，npmmirror 成功）：
-   ```bash
-   ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" node node_modules/electron/install.js
-   ```
-3. 常用命令（均在仓库根目录）：
-   ```bash
-   pnpm typecheck   # TS 类型检查
-   pnpm test        # vitest 25 用例
-   pnpm build       # esbuild(main/preload) + vite(渲染层) → apps/desktop/dist
-   pnpm dev         # 开发模式（vite HMR + esbuild watch + electron）
-   pnpm icons       # 重新生成图标（一般不需要）
-   pnpm license ... # 授权 CLI
-   # 冒烟自检（CI 友好，自动退出）：
-   cd apps/desktop && BOXKIT_SMOKE=1 npx electron . --no-sandbox
-   ```
-
----
-
-## 三、未完成工作（按优先级）
-
-### A. 打包收尾
-- [x] **A1 打包验证**：✅ 2026-08-29 Windows 完成（NSIS+zip+latest.yml）；mac 见 release.yml 流水线
-- [x] **A2 完整分发**：✅ Windows 侧完成；mac dmg+zip、linux AppImage+deb 由 CI 产出
-- [x] **A3 打包产物回归（Windows）**：✅ 打包后冒烟 ok:true apps:84；`.bkx` 双击安装链路已接通（argv），真实双击体验待装机抽查
-- [x] **A4 更新端到端**：✅ 本地更新服务器 + 打包应用验证全链路（发现→下载→落盘）；正式环境换真实服务器即可
-- [ ] **A5 签名与公证**（需 Apple Developer 账号 $99/年 + Windows 代码签名证书）：CI 已预留 Secrets（`APPLE_ID` 等），把 `electron-builder.yml` 的 `notarize` 改 `true`；Windows 配 `certificateFile/certificatePassword`
-
-### B. 商用安全【高】
-- [ ] **B1 生产密钥对替换**（当前内置的是开发密钥）：
-  ```bash
-  pnpm license keygen --out <离线保管目录>
-  # 把生成的 public.pem 内容替换 apps/desktop/src/main/services/license.ts 中
-  # BOXKIT_LICENSE_PUBLIC_KEY，重新构建；私钥离线保管，绝不入库
-  ```
-- [ ] **B2 试用期防篡改评估**：`.sys-meta` 试用期标记是轻混淆（HMAC 截断），懂技术的用户可删除重置。商用前决定是否升级为服务端激活（需要后端）。
-- [ ] **B3 Sentry 上线**：注册 Sentry → 拿 DSN → 打包环境注入 `BOXKIT_SENTRY_DSN`。可选增强：渲染进程接 `@sentry/electron/renderer`（目前仅主进程 + 渲染进程崩溃本地日志）。
-- [x] **B4 隐私合规**：✅ README「隐私声明」节已写；首次启动试用期 toast 已有；上报开关在设置页。
-
-### C. 多端适配
-- [x] **C1 Windows**：✅ 开始菜单扫描 / 系统命令 / `.bkx` 关联完成；签名证书配好前出未签名包
-- [x] **C2 Linux**：✅ `.desktop` 解析 + AppImage/deb 配置完成；真机回归交给 CI smoke
-- [x] **C3 三端回归**：✅ 冒烟三端进 CI（ci.yml，Linux 走 xvfb）；快捷键/ vibrancy 已平台化
-
-### D. 产品功能【中】（全部未动，按价值排序）
-- [ ] D1 拼音/首字母匹配（`searchEngine.ts` 的 `matchScore` 是纯函数，加一层拼音索引即可）
-- [ ] D2 使用频率排序 / 搜索历史
-- [ ] D3 插件市场（服务端清单聚合 + 客户端市场页；安装链路 `stageInstall/commitInstall` 可直接复用）
-- [ ] D4 文件搜索 provider（macOS 用 `mdfind`，Win 用 everything SDK 或索引 API）
-- [ ] D5 剪贴板全局监听（当前剪贴板插件仅在打开时轮询；uTools 是后台常驻监听 → 主进程轮询 + 推送）
-- [ ] D6 子输入框结果回填主列表（uTools 式协议；当前仅把输入转发给插件）
-- [ ] D7 快捷键录制控件（当前手输 accelerator 字符串）
-- [ ] D8 i18n（当前中文写死）
-
-### E. 工程化
-- [x] **E1** ✅ README.md + docs/plugin-dev.md 完成
-- [ ] E2 ESLint + Prettier（当前仅 tsc strict）
-- [x] **E3** ✅ .github/workflows/ci.yml（三端验证）+ release.yml（三端发布）
-- [x] **E4** ✅ git init + 首次提交（2026-08-29）
-- [ ] E5 生产环境考虑主包压缩（当前 3.4MB 未 minify，构建脚本把 `minify: false` 打开即可）
-
----
-
-## 四、关键文件地图
-
-```
-apps/desktop/src/main/
-  index.ts                  # 入口：生命周期总装 + BOXKIT_SMOKE 自检
-  ipc.ts                    # 全部主窗/设置窗 IPC 处理器
-  core/                     # paths / logger / config(设置存储)
-  services/
-    license.ts              # 授权状态机（内置公钥在文件顶部常量）
-    updater.ts / crash.ts / hotkey.ts / tray.ts / autostart.ts / machine-id.ts
-  providers/
-    searchEngine.ts         # 纯函数搜索评分（有单测）
-    apps.ts / commands.ts   # 应用扫描 / 系统命令（多端 TODO 标注在 case 分支）
-  plugins/
-    manager.ts              # 插件扫描/seed/热重载/插件 KV 存储
-    host.ts                 # 沙箱视图 + bk-plugin:// 协议 + bk.* IPC 权限拦截
-    staging.ts              # .bkx 解压/校验/暂存/提交
-  windows/                  # 主搜索窗(无框毛玻璃) / 设置窗
-apps/desktop/src/preload/   # main.ts(主窗桥) / plugin.ts(沙箱桥)
-apps/desktop/src/renderer/  # search(搜索面板) / settings(设置) — React+Vite
-packages/shared/src/        # ipc.ts(通道) / manifest.ts(清单校验) / license.ts(验签) / types.ts
-packages/sdk/src/index.ts   # 插件作者用的 bk API 类型（文档素材）
-plugins/                    # userData 运行时安装目录（主仓不含源码）
-market/                     # 静态插件市场：index.html 门户（入库）+ CI 生成物（manifest/plugins/logo，gitignore）
-tools/                      # license-cli / update-server / build-market.mjs / gen-icons.mjs
-```
-
----
-
-## 五、踩坑记录（新机器必读）
-
-1. **沙箱 preload 只能 import `@boxkit/shared/ipc`**（纯常量子路径），不能 import `@boxkit/shared` 主入口 —— 会连带打包 zod 和 `node:crypto`，沙箱 preload 禁止 Node 内建模块，运行即崩（曾经 700KB→5KB 就是这个原因）。
-2. **electron-builder 要求 electron 版本固定**，已改 `"electron": "44.0.0"`，不要加回 `^`。
-3. **Electron 二进制/electron-builder 辅助二进制下载走 npmmirror 镜像**（见第二节命令）。
-4. **面板应用不进 Dock**：LSUIElement + `app.dock.hide()`，任务管理器/常规应用列表里找不到是正常的；用 Option+Space 或托盘唤起。自动化测试（AX/截屏）也看不见它，验证用 `BOXKIT_SMOKE=1`。
-5. dev 模式下登录项设置被跳过（`app.isPackaged` 检查），启动日志有 "Unable to set login item" 属正常（打包后消失）。
-6. **重置试用期**：删 `~/Library/Application Support/BoxKit/.sys-meta`。
-7. 插件热重载：设置→插件→添加开发目录（含 plugin.json 的目录），保存后 400ms 防抖自动重载。
-8. 修改主进程代码后 dev 模式需重启 electron（渲染层才有 HMR）。
-9. userData 布局（mac）：`~/Library/Application Support/BoxKit/` → `config.json`、`plugins/`、`plugin-data/<插件>/db.json`、`logs/`、`license.dat`、`.sys-meta`。
-10. 官方插件 seed 只在目录不存在时复制 —— 用户卸载后重启不会被重新装回来（符合预期）。
-11. 本机（原机器）当前有一个终端后台起的 dev 实例还在运行，离开前可托盘退出或 `pkill -f "electron ."`。
-
----
-
-## 六、快速验证清单（新机器装好后跑一遍）
+## 开发命令
 
 ```bash
-pnpm install                                   # ① 依赖就位（必要时用镜像装 electron 二进制）
-pnpm typecheck && pnpm test                    # ② 预期：0 错误 / 25 passed
-pnpm build                                     # ③ 预期：dist/main + dist/preload(5KB级) + dist/renderer
-cd apps/desktop && BOXKIT_SMOKE=1 npx electron . --no-sandbox
-# ④ 预期输出 BOXKIT_SMOKE_OK {"ok":true,"apps":>0,"plugins":["clipboard-history","devtoolbox"],...}
-npx electron-builder --dir                     # ⑤ A1 未完成项，从这里继续
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm dev
 ```
 
+Electron smoke：
 
-## 附：实机对照工具与结论（2026-08-30 深夜）
+```bash
+cd apps/desktop
+BOXKIT_SMOKE=1 npx electron . --no-sandbox
+```
 
-- **PrintWindow 通道已打通**：对 uTools 窗口 `PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT=2)` 可完整抓取其实机渲染（含后台窗口），抓图存 `C:/Users/xuzilong/AppData/Local/Temp/ut-*.png`。已抓到管理中心/插件市场页实机图——布局与 BoxKit 市场页同构（搜索+卡片网格+排行榜）。
-- **uTools 主面板视图无法注入到达**：热键（Alt+Space）对注入无响应；`utools://panel` 协议语义是"搜索插件 panel"（会弹「未发现插件应用」页）；键盘/鼠标注入被会话吞掉。主面板只能由真人在活跃会话按热键唤出。
-- **面板对照已完成**：以官方 utools-main.png 为基准逐项对齐（离屏截图 `BOXKIT_PANEL_SHOT` 可随时复验），剩余仅为实机同屏最终确认。
-- **区域截屏运行时实测**：`BOXKIT_SHOT_TEST` 断开会话下 `BitBlt 0x5`（Windows 会话隔离硬限制），会话恢复重跑即出 `SHOT_TEST_OK full=2560x1440 crop=200x100`。
+## 关键路径
+
+```text
+apps/desktop/src/main/index.ts             生命周期和 smoke
+apps/desktop/src/main/ipc.ts               主窗口/设置窗口 IPC
+apps/desktop/src/main/providers/            应用、文件、搜索、收藏、剪贴板
+apps/desktop/src/main/plugins/              管理、暂存、兼容宿主
+apps/desktop/src/main/services/             市场、更新、托盘、日志
+apps/desktop/src/preload/                   主窗口和插件桥
+apps/desktop/src/renderer/                  搜索面板和设置页
+packages/shared/src/                       IPC、类型、manifest schema
+packages/sdk/src/                           插件类型定义
+tools/                                      图标与本地更新服务示例
+```
+
+## 发布注意事项
+
+- 默认更新 feed 指向 GitHub Releases；本地更新源必须显式设置。
+- 市场条目必须有 64 位 SHA-256，市场仓构建应保留源码 commit 与构建报告。
+- macOS 公证和 Windows 代码签名依赖外部证书 Secrets，未配置时只能发布未签名包。
+- 祖先提交曾存在开发密钥和旧构建产物。公开仓库前应轮换相关凭据；如需清理 Git 历史，必须由仓库管理员单独审批并执行 force-push。
+- 当前市场仓不在本工作区。市场仓的公开性、MIT LICENSE、插件许可证和 Pages 产物可追溯性必须在那里单独验收。
+
+## 已知测试边界
+
+当前测试覆盖搜索和清单校验。插件宿主 IPC、真实 Electron renderer、市场网络和跨平台打包仍应持续增加集成测试。`BOXKIT_SMOKE` 只证明初始化和降级路径，不代表完整 UI 验收。

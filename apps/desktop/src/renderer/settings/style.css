@@ -6,7 +6,7 @@
 }
 
 :root {
-  /* uTools 浅色（默认），跟随系统深色 */
+  /* 浅色（默认），跟随系统深色 */
   --bg: #f4f5f7;
   --panel: #ffffff;
   --bg-soft: #f0f2f5;
@@ -474,7 +474,7 @@ h2 {
   border-radius: 4px;
 }
 
-/* ————— uTools 式补充：分段切换 / 市场卡片 / 快捷键录制 ————— */
+/* 分段切换 / 市场卡片 / 快捷键录制 */
 .segment {
   display: flex;
   gap: 6px;

@@ -24,11 +24,12 @@ extraResources:
   - from: resources
     to: .
 
-# 生成 latest*.yml 更新清单（electron-updater 依赖）；上传用 CI 或自有渠道
-# 客户端运行时可在设置页/BOXKIT_UPDATE_URL 覆盖 feed 地址
+# GitHub Releases 资产目录；本地测试可通过设置页或 BOXKIT_UPDATE_URL 覆盖
 publish:
-  provider: generic
-  url: https://updates.boxkit.app/${os}/${arch}
+  provider: github
+  owner: niocoders
+  repo: boxkit
+  releaseType: release
 
 asar: true
 compression: maximum

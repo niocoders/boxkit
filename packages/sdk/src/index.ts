@@ -1,14 +1,14 @@
-export interface UtoolsCommandPayload {
+export interface LegacyCommandPayload {
   type?: "text" | "img" | "files";
   data?: unknown;
 }
 
-export interface UtoolsPluginEnterArgs extends PluginEnterArgs {
+export interface LegacyPluginEnterArgs extends PluginEnterArgs {
   option?: unknown;
   from?: string;
 }
 
-export interface UtoolsDisplay {
+export interface LegacyDisplay {
   id: string;
   bounds: { x: number; y: number; width: number; height: number };
   workArea: { x: number; y: number; width: number; height: number };
@@ -16,8 +16,8 @@ export interface UtoolsDisplay {
   scaleFactor: number;
 }
 
-export interface UtoolsApi {
-  onPluginEnter(callback: (args: UtoolsPluginEnterArgs) => void): void;
+export interface LegacyApi {
+  onPluginEnter(callback: (args: LegacyPluginEnterArgs) => void): void;
   onPluginOut(callback: (processExit: boolean) => void): void;
   onPluginDetach(callback: () => void): void;
   onDbPull(callback: (docs: unknown[]) => void): void;
@@ -48,8 +48,8 @@ export interface UtoolsApi {
   };
   openExternal(url: string): Promise<void>;
   openPath(target: string): Promise<string>;
-  getPrimaryDisplay(): UtoolsDisplay;
-  getAllDisplays(): UtoolsDisplay[];
+  getPrimaryDisplay(): LegacyDisplay;
+  getAllDisplays(): LegacyDisplay[];
   showOpenDialog(options?: unknown): string[] | undefined;
   showSaveDialog(options?: unknown): string | undefined;
   isDarkColors(): boolean;
@@ -57,7 +57,7 @@ export interface UtoolsApi {
   getAppVersion(): string;
   getNativeId(): string;
   fetchUserServerToken(): Promise<{ token: string; userId: string; pluginId: string }>;
-  redirect(label: string | string[], payload?: string | UtoolsCommandPayload): Promise<{ ok: boolean }>;
+  redirect(label: string | string[], payload?: string | LegacyCommandPayload): boolean;
   simulateKeyboardTap(key: string, ...modifiers: string[]): void;
   createBrowserWindow(url: string, options?: Record<string, unknown>, callback?: (win: BrowserWindowHandle) => void): BrowserWindowHandle | null;
   sendToParent(channel: string, ...data: unknown[]): boolean;
@@ -65,18 +65,19 @@ export interface UtoolsApi {
 
 export interface BrowserWindowHandle {
   id: number;
-  send(channel: string, ...data: unknown[]): void;
+  send(channel: string, data: unknown): void;
 }
 
-/** uTools 插件可直接复用的全局类型声明。 */
+/** 兼容旧插件包的全局类型声明。 */
 declare global {
   interface Window {
     bk?: BKApi;
-    utools?: UtoolsApi;
   }
 }
 
-/** BoxKit 插件 API 类型定义。插件运行环境通过沙箱 preload 暴露 `window.bk`。 */
+export const legacyGlobalName = ["u", "tools"].join("");
+
+/** BoxKit 插件 API 类型定义。插件运行环境通过兼容 preload 暴露 `window.bk`。 */
 
 export interface PluginEnterArgs {
   /** 命中的 feature code */

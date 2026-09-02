@@ -9,8 +9,6 @@ export const pluginDataDir = () => path.join(userDataDir(), "plugin-data");
 export const stagingDir = () => path.join(userDataDir(), "plugin-staging");
 export const logsDir = () => path.join(userDataDir(), "logs");
 export const configPath = () => path.join(userDataDir(), "config.json");
-export const licensePath = () => path.join(userDataDir(), "license.dat");
-export const trialMetaPath = () => path.join(userDataDir(), ".sys-meta");
 export const machineIdPath = () => path.join(userDataDir(), ".machine-id");
 
 export function ensureDirs(): void {

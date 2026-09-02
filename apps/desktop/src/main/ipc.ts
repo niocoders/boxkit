@@ -1,5 +1,7 @@
-import { BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { BrowserWindow, clipboard, dialog, ipcMain, nativeImage, shell } from "electron";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   IPC,
   type ConfigSetResult,
@@ -14,15 +16,20 @@ import { marketService } from "./services/market.js";
 import { appProvider } from "./providers/apps.js";
 import { getSystemCommands, runSystemCommand } from "./providers/commands.js";
 import { searchQuery, type EngineDeps } from "./providers/searchEngine.js";
+import { fileProvider } from "./providers/files.js";
+import { clipboardHistoryProvider } from "./providers/clipboardHistory.js";
+import { getPinnedIds, pin, unpin } from "./providers/favorites.js";
 import { pluginManager } from "./plugins/manager.js";
-import { stageInstall, commitInstall } from "./plugins/staging.js";
+import { stageInstall, commitInstall, discardInstall } from "./plugins/staging.js";
 import type { PluginHost } from "./plugins/host.js";
 import { checkForUpdates, installUpdate, onUpdateEvent, updaterState, hostInfo } from "./services/updater.js";
 import { applyHotkey, unregisterAll } from "./services/hotkey.js";
 import { applyAutostart } from "./services/autostart.js";
 import { getMainWindow } from "./windows/mainWindow.js";
 import { showMainWindow } from "./windows/mainWindow.js";
-import { getSettingsWindow, openSettingsWindow } from "./windows/settingsWindow.js";
+import { getSettingsWindow, openSettingsWindow, queueSettingsShowTab } from "./windows/settingsWindow.js";
+
+const execFileP = promisify(execFile);
 
 const WEB_ENGINES: Record<string, (q: string) => string> = {
   google: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`,
@@ -41,6 +48,9 @@ function engineDeps(): EngineDeps {
         feature: f,
       })),
     ),
+    files: fileProvider.getFiles(),
+    clipboard: clipboardHistoryProvider.getItems({ limit: settings.get().clipboardHistoryLimit }),
+    pinnedIds: getPinnedIds(),
     usage: usageAll(),
   };
 }
@@ -70,6 +80,42 @@ export function registerIpc(deps: IpcDeps): void {
     searchQuery(String(text ?? ""), engineDeps()),
   );
 
+  ipcMain.handle(IPC.favoritesGet, () => ({ ids: getPinnedIds() }));
+  ipcMain.handle(IPC.favoritesPin, (_e, id: unknown) => {
+    const ids = pin(String(id ?? ""));
+    sendToMainWindow(IPC.searchDataChanged, null);
+    return { ids };
+  });
+  ipcMain.handle(IPC.favoritesUnpin, (_e, id: unknown) => {
+    const ids = unpin(String(id ?? ""));
+    sendToMainWindow(IPC.searchDataChanged, null);
+    return { ids };
+  });
+
+  ipcMain.handle(IPC.clipboardHistoryQuery, (_e, query: unknown) => {
+    const input = query && typeof query === "object" ? query as { text?: unknown; limit?: unknown } : {};
+    return clipboardHistoryProvider.getItems({
+      text: typeof input.text === "string" ? input.text : undefined,
+      limit: typeof input.limit === "number" ? input.limit : undefined,
+    });
+  });
+  ipcMain.handle(IPC.clipboardHistoryCapture, (_e, capture: unknown) => {
+    if (!capture || typeof capture !== "object") return null;
+    const value = capture as { text?: unknown; paths?: unknown; image?: unknown };
+    const item = clipboardHistoryProvider.capture({
+      text: typeof value.text === "string" ? value.text : undefined,
+      paths: Array.isArray(value.paths) ? value.paths.filter((p): p is string => typeof p === "string") : undefined,
+      image: value.image instanceof Uint8Array ? value.image : undefined,
+    });
+    if (item) sendToMainWindow(IPC.clipboardHistoryChanged, null);
+    return item;
+  });
+  ipcMain.handle(IPC.clipboardHistoryClear, () => {
+    clipboardHistoryProvider.clear();
+    sendToMainWindow(IPC.clipboardHistoryChanged, null);
+    return { ok: true };
+  });
+
   ipcMain.handle(IPC.searchExecute, async (_e, result: SearchResult) => {
     if (!result || typeof result.id !== "string") return { ok: false };
     try {
@@ -78,18 +124,39 @@ export function registerIpc(deps: IpcDeps): void {
         case "app": {
           if (!result.id.startsWith("app:")) return { ok: false };
           const appPath = result.id.slice(4);
-          void shell.openPath(appPath);
+          const error = process.platform === "linux"
+            ? await execFileP("gio", ["launch", appPath], { timeout: 5000 }).then(() => null).catch((err: unknown) => String(err))
+            : await shell.openPath(appPath);
+          if (error) return { ok: false, message: error };
+          return { ok: true };
+        }
+        case "file": {
+          const filePath = result.filePath ?? (result.id.startsWith("file:") ? result.id.slice(5) : "");
+          if (!filePath) return { ok: false, message: "文件路径无效" };
+          const error = await shell.openPath(filePath);
+          return error ? { ok: false, message: error } : { ok: true };
+        }
+        case "clipboard": {
+          const item = clipboardHistoryProvider.getItems({ limit: 200 }).find((entry) => entry.id === result.clipboardId);
+          if (!item) return { ok: false, message: "剪贴板内容已过期" };
+          if (item.kind === "text") clipboard.writeText(item.text ?? "");
+          else if (item.kind === "image" && item.imageDataUrl) {
+            const image = nativeImage.createFromDataURL(item.imageDataUrl);
+            if (image.isEmpty()) return { ok: false, message: "剪贴板图片已损坏" };
+            (clipboard as unknown as { writeImage(image: Electron.NativeImage): void }).writeImage(image);
+          } else if (item.kind === "file") {
+            clipboard.writeText((item.paths ?? []).join("\n"));
+          }
           return { ok: true };
         }
         case "command": {
-          const id = result.id.slice(4);
+          const id = result.id.startsWith("cmd:") ? result.id.slice(4) : result.id;
           if (id === "settings") {
             openSettingsWindow();
             return { ok: true };
           }
           if (id === "open:market") {
-            openSettingsWindow();
-            sendToSettings(IPC.settingsShowTab, { tab: "plugins", view: "market" });
+            queueSettingsShowTab({ tab: "plugins", view: "market" });
             return { ok: true };
           }
           if (id === "quit") {
@@ -150,11 +217,16 @@ export function registerIpc(deps: IpcDeps): void {
     if (patch.updateFeed === null || typeof patch.updateFeed === "string") {
       safe.updateFeed = patch.updateFeed;
     }
-    if (patch.marketUrl === null || typeof patch.marketUrl === "string") {
-      const u = patch.marketUrl;
-      safe.marketUrl = typeof u === "string" && u.trim() && !/^https?:\/\//i.test(u.trim())
-        ? `http://${u.trim()}`
-        : u;
+    if (typeof patch.marketUrl === "string" || patch.marketUrl === null) {
+      const value = patch.marketUrl;
+      safe.marketUrl = value === null ? null : value.trim();
+    }
+    if (typeof patch.pinnedIds === "object" && Array.isArray(patch.pinnedIds)) {
+      safe.pinnedIds = patch.pinnedIds.filter((id): id is string => typeof id === "string").slice(0, 500);
+    }
+    if (typeof patch.clipboardHistoryEnabled === "boolean") safe.clipboardHistoryEnabled = patch.clipboardHistoryEnabled;
+    if (typeof patch.clipboardHistoryLimit === "number" && Number.isFinite(patch.clipboardHistoryLimit)) {
+      safe.clipboardHistoryLimit = Math.max(1, Math.min(200, Math.floor(patch.clipboardHistoryLimit)));
     }
     const next = settings.set(safe);
     const hotkey = applyHotkey(toggleViaHotkey);
@@ -196,7 +268,11 @@ export function registerIpc(deps: IpcDeps): void {
     return { preview, conflict: staged.conflict };
   });
 
-  ipcMain.handle(IPC.pluginInstallConfirm, async (_e, stagingId: string) => {
+  ipcMain.handle(IPC.pluginInstallConfirm, async (_e, stagingId: string, options?: { cancel?: boolean }) => {
+    if (options?.cancel) {
+      discardInstall(String(stagingId));
+      return { ok: true };
+    }
     const manifest = await commitInstall(String(stagingId));
     pluginManager.reloadAll();
     pluginHost.destroyView(manifest.name);

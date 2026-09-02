@@ -19,9 +19,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm audit:governance
       - run: pnpm build
       - name: Smoke self-check
         if: runner.os != 'Linux'

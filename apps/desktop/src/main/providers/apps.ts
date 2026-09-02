@@ -16,9 +16,15 @@ export class AppProvider {
   private apps: EngineApp[] = [];
   private iconCache = new Map<string, string>();
   private scanning = false;
+  private listeners = new Set<() => void>();
 
   getApps(): EngineApp[] {
     return this.apps;
+  }
+
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   /** 按平台扫描应用列表；返回应用数量 */
@@ -67,6 +73,7 @@ export class AppProvider {
       }
       logger.info("apps", `扫描到 ${this.apps.length} 个应用`);
       this.warmIconsInBackground();
+      for (const listener of this.listeners) listener();
       return this.apps.length;
     } finally {
       this.scanning = false;
