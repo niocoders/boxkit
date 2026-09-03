@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   safeParseManifest,
+  getPluginSecurityMode,
   type PluginListItem,
   type PluginManifest,
 } from "@boxkit/shared";
@@ -79,6 +80,12 @@ class PluginKV {
     this.timer = setTimeout(() => this.flush(), 300);
   }
 }
+
+export type PluginLifecycleEvent =
+  | { type: "enable"; name: string }
+  | { type: "disable"; name: string }
+  | { type: "reload"; names: string[] }
+  | { type: "uninstall"; name: string };
 
 export class PluginManager {
   private plugins = new Map<string, LoadedPlugin>();
@@ -171,6 +178,7 @@ export class PluginManager {
         path: p.dir,
         enabled: p.enabled,
         permissions: [...p.manifest.permissions],
+        securityMode: getPluginSecurityMode(p.manifest),
         features: p.manifest.features.map((f) => ({
           code: f.code,
           explain: f.explain,

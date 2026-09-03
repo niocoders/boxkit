@@ -52,6 +52,21 @@ async function waitForText(page, text, timeout = 15000) {
 
 async function main() {
   fs.mkdirSync(artifactDir, { recursive: true });
+  const fixturePluginDir = path.join(userData, "plugins", "ui-settings-fixture");
+  fs.mkdirSync(fixturePluginDir, { recursive: true });
+  fs.writeFileSync(path.join(fixturePluginDir, "plugin.json"), JSON.stringify({
+    name: "ui-settings-fixture",
+    displayName: "设置入口测试插件",
+    version: "1.0.0",
+    description: "验证插件设置和快捷键双入口",
+    main: "index.html",
+    permissions: [],
+    features: [
+      { code: "main", explain: "测试主功能", cmds: ["设置入口测试"] },
+      { code: "secondary", explain: "测试副功能", cmds: ["设置副入口"] },
+    ],
+  }, null, 2));
+  fs.writeFileSync(path.join(fixturePluginDir, "index.html"), "<!doctype html><title>UI fixture</title><main>UI fixture</main>");
   child = spawn(electronPath, [".", "--no-sandbox", `--remote-debugging-port=${port}`, `--user-data-dir=${userData}`], {
     cwd: desktopRoot,
     stdio: ["ignore", "pipe", "pipe"],
@@ -78,25 +93,68 @@ async function main() {
   if (await search.locator(".r-item.active").count() < 1) fail("Keyboard navigation did not select a result");
 
   await input.fill("");
-  await waitForText(search, "插件应用市场");
-  const marketItem = search.locator(".g-item", { hasText: "插件应用市场" }).first();
-  await marketItem.click();
+  const overviewEntry = search.getByRole("button", { name: "打开设置与本地概览", exact: true });
+  await overviewEntry.click();
 
   const settings = await findPage((page) => page.url().includes("/renderer/settings/index.html"));
   await settings.waitForLoadState("domcontentloaded");
-  await waitForText(settings, "插件");
+  await waitForText(settings, "本地概览");
+  await waitForText(settings, "常用应用");
+  if (await settings.getByText("已安装应用快捷键", { exact: true }).count()) fail("Application shortcuts should not be shown");
+  const sidebarLabels = ["本地概览", "通用", "快捷键", "搜索与索引", "剪贴板与本地数据", "插件", "外观与窗口", "高级", "关于"];
+  for (const label of sidebarLabels) {
+    if (await settings.locator("button.nav", { hasText: label }).count() < 1) fail(`Missing settings navigation item: ${label}`);
+  }
+  await settings.locator("button.nav", { hasText: "插件" }).click();
+  await settings.getByRole("button", { name: "插件市场", exact: true }).click();
   await waitForText(settings, "插件市场");
   const settingsSize = await settings.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   if (settingsSize.width < 700 || settingsSize.height < 500) fail(`Unexpected settings viewport: ${JSON.stringify(settingsSize)}`);
   if (await settings.getByRole("button", { name: "插件市场", exact: true }).count() < 1) fail("Market segment was not selected on first open");
   await settings.screenshot({ path: path.join(artifactDir, "market.png") });
 
+  await settings.locator("button.nav", { hasText: "快捷键" }).click();
+  await waitForText(settings, "插件功能快捷键");
+  await waitForText(settings, "设置入口测试插件");
+  await waitForText(settings, "测试主功能");
+  if (await settings.getByRole("button", { name: "插件设置", exact: true }).count() < 1) {
+    fail("Aggregate hotkeys view does not expose the plugin settings entry");
+  }
+  await settings.screenshot({ path: path.join(artifactDir, "hotkeys.png") });
+
+  await search.bringToFront();
+  await input.fill("设置入口测试");
+  await waitForText(search, "设置入口测试插件");
+  await input.press("ArrowDown");
+  await input.press("Enter");
+  const pluginSettingsButton = search.getByRole("button", { name: "插件设置", exact: true });
+  await pluginSettingsButton.waitFor({ state: "visible" });
+  // 插件模式下 WebContentsView 覆盖内容区，原生点击坐标不可靠；直接触发按钮处理器。
+  await pluginSettingsButton.evaluate((el) => el.click());
+
+  await settings.bringToFront();
+  await settings.getByRole("dialog", { name: "插件设置", exact: true }).waitFor({ state: "visible" });
+  await waitForText(settings, "测试主功能");
+  await waitForText(settings, "测试副功能");
+  if (await settings.getByRole("switch", { name: "设置入口测试插件 开关", exact: true }).count() < 1) {
+    fail("Per-plugin settings dialog does not expose the enabled toggle");
+  }
+  await settings.screenshot({ path: path.join(artifactDir, "plugin-settings.png") });
+  await settings.getByRole("button", { name: "完成", exact: true }).click();
+  await settings.locator("button.nav", { hasText: "插件" }).click();
+  await settings.getByRole("button", { name: "插件市场", exact: true }).click();
+
+  const marketSearch = settings.getByRole("textbox", { name: "搜索插件市场" });
+  await marketSearch.waitFor({ state: "visible" });
+  const marketStatus = settings.getByRole("combobox", { name: "插件市场状态过滤" });
+  if (await marketStatus.count() < 1) fail("Market status filter is missing");
+
   await settings.getByRole("button", { name: /已安装/ }).click();
-  await waitForText(settings, "尚未安装任何插件");
+  await waitForText(settings, "设置入口测试插件");
   if (await settings.getByRole("button", { name: /安装插件包/ }).count() < 1) fail("Local package install control is missing");
   if (await settings.getByRole("button", { name: "添加开发目录", exact: true }).count() < 1) fail("Development directory control is missing");
 
-  await settings.getByRole("button", { name: /通用/ }).click();
+  await settings.getByRole("button", { name: /剪贴板与本地数据/ }).click();
   const clipboardSwitch = settings.getByRole("switch", { name: "剪贴板历史", exact: true });
   await clipboardSwitch.waitFor({ state: "visible" });
   const before = await clipboardSwitch.getAttribute("aria-checked");
@@ -117,7 +175,12 @@ async function main() {
     settingsSize,
     searchUrl: search.url(),
     settingsUrl: settings.url(),
-    screenshots: ["artifacts/electron-ui/search.png", "artifacts/electron-ui/market.png"],
+    screenshots: [
+      "artifacts/electron-ui/search.png",
+      "artifacts/electron-ui/market.png",
+      "artifacts/electron-ui/hotkeys.png",
+      "artifacts/electron-ui/plugin-settings.png",
+    ],
     childOutput: childOutput.join("").split(/\r?\n/).filter(Boolean).slice(-20),
   };
   fs.writeFileSync(path.join(artifactDir, "report.json"), JSON.stringify(report, null, 2));

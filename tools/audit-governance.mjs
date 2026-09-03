@@ -15,6 +15,7 @@ const allowedCompat = new Set([
   "tests/fixtures/compat-plugin/plugin.json",
   "tools/electron-compat-smoke.mjs",
   "tools/electron-ui-smoke.mjs",
+  "docs/luna-utools-parity-backlog.md",
   "NOTICE",
 ]);
 const forbidden = [

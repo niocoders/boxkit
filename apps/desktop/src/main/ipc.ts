@@ -4,11 +4,18 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
   IPC,
+  isIpcRoleAllowed,
+  ipcRoleForUrl,
+  type IpcRole,
   type ConfigSetResult,
+  type InputPayload,
+  type PluginCommandType,
   type InstallPreview,
   type SearchResult,
+  type SettingsRoute,
 } from "@boxkit/shared";
 import { logger } from "./core/logger.js";
+import { getPluginSecurityMode } from "@boxkit/shared/manifest";
 import { settings } from "./core/config.js";
 import { logsDir } from "./core/paths.js";
 import { usageAll, usageRecord } from "./core/usage.js";
@@ -23,20 +30,33 @@ import { pluginManager } from "./plugins/manager.js";
 import { stageInstall, commitInstall, discardInstall } from "./plugins/staging.js";
 import type { PluginHost } from "./plugins/host.js";
 import { checkForUpdates, installUpdate, onUpdateEvent, updaterState, hostInfo } from "./services/updater.js";
-import { applyHotkey, unregisterAll } from "./services/hotkey.js";
+import { applyConfiguredHotkeys, unregisterAll, setExtraHotkeyHandlers } from "./services/hotkey.js";
 import { applyAutostart } from "./services/autostart.js";
 import { getMainWindow } from "./windows/mainWindow.js";
 import { showMainWindow } from "./windows/mainWindow.js";
 import { getSettingsWindow, openSettingsWindow, queueSettingsShowTab, markSettingsReady } from "./windows/settingsWindow.js";
+import {
+  detachPluginWindow,
+  reattachPluginWindow,
+  getDetachedWindow,
+  detachStateForWindow,
+  findDetachedHostBySender,
+  updateDetachedWindowState,
+} from "./windows/pluginDetachWindow.js";
 
 const execFileP = promisify(execFile);
+let configuredHotkeySync: (() => string | null) | null = null;
+
+export function refreshConfiguredHotkeys(): string | null {
+  return configuredHotkeySync?.() ?? null;
+}
 
 const WEB_ENGINES: Record<string, (q: string) => string> = {
   google: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`,
   baidu: (q) => `https://www.baidu.com/s?wd=${encodeURIComponent(q)}`,
 };
 
-function engineDeps(): EngineDeps {
+function engineDeps(input?: InputPayload): EngineDeps {
   return {
     apps: appProvider.getApps(),
     commands: getSystemCommands(),
@@ -52,6 +72,7 @@ function engineDeps(): EngineDeps {
     clipboard: clipboardHistoryProvider.getItems({ limit: settings.get().clipboardHistoryLimit }),
     pinnedIds: getPinnedIds(),
     usage: usageAll(),
+    input,
   };
 }
 
@@ -67,6 +88,36 @@ export function toast(msg: string): void {
   sendToMainWindow(IPC.uiToast, msg);
 }
 
+function senderRole(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): IpcRole | null {
+  return ipcRoleForUrl(event.sender.getURL());
+}
+
+function requireRole(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent, channel: string): boolean {
+  const role = senderRole(event);
+  if (!role || !isIpcRoleAllowed(role, channel)) {
+    logger.warn("ipc", `拒绝未授权 IPC: ${channel}`);
+    return false;
+  }
+  return true;
+}
+
+type InvokeListener = (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any;
+type EventListener = (event: Electron.IpcMainEvent, ...args: any[]) => void;
+
+function guardedHandle(channel: string, listener: InvokeListener): void {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!requireRole(event, channel)) return { ok: false, code: "FORBIDDEN", message: "IPC 调用者无权执行此操作" };
+    return listener(event, ...args);
+  });
+}
+
+function guardedOn(channel: string, listener: EventListener): void {
+  ipcMain.on(channel, (event, ...args) => {
+    if (!requireRole(event, channel)) return;
+    listener(event, ...args);
+  });
+}
+
 export interface IpcDeps {
   pluginHost: PluginHost;
   onQuitRequest: () => void;
@@ -76,34 +127,34 @@ export function registerIpc(deps: IpcDeps): void {
   const { pluginHost } = deps;
 
   // ————— 搜索 —————
-  ipcMain.on(IPC.settingsReady, () => {
+  guardedOn(IPC.settingsReady, () => {
     markSettingsReady();
   });
 
-  ipcMain.handle(IPC.searchQuery, (_e, text: string): SearchResult[] =>
-    searchQuery(String(text ?? ""), engineDeps()),
+  guardedHandle(IPC.searchQuery, (_e, text: string | InputPayload): SearchResult[] =>
+    searchQuery(text, engineDeps(typeof text === "string" ? undefined : text)),
   );
 
-  ipcMain.handle(IPC.favoritesGet, () => ({ ids: getPinnedIds() }));
-  ipcMain.handle(IPC.favoritesPin, (_e, id: unknown) => {
+  guardedHandle(IPC.favoritesGet, () => ({ ids: getPinnedIds() }));
+  guardedHandle(IPC.favoritesPin, (_e, id: unknown) => {
     const ids = pin(String(id ?? ""));
     sendToMainWindow(IPC.searchDataChanged, null);
     return { ids };
   });
-  ipcMain.handle(IPC.favoritesUnpin, (_e, id: unknown) => {
+  guardedHandle(IPC.favoritesUnpin, (_e, id: unknown) => {
     const ids = unpin(String(id ?? ""));
     sendToMainWindow(IPC.searchDataChanged, null);
     return { ids };
   });
 
-  ipcMain.handle(IPC.clipboardHistoryQuery, (_e, query: unknown) => {
+  guardedHandle(IPC.clipboardHistoryQuery, (_e, query: unknown) => {
     const input = query && typeof query === "object" ? query as { text?: unknown; limit?: unknown } : {};
     return clipboardHistoryProvider.getItems({
       text: typeof input.text === "string" ? input.text : undefined,
       limit: typeof input.limit === "number" ? input.limit : undefined,
     });
   });
-  ipcMain.handle(IPC.clipboardHistoryCapture, (_e, capture: unknown) => {
+  guardedHandle(IPC.clipboardHistoryCapture, (_e, capture: unknown) => {
     if (!capture || typeof capture !== "object") return null;
     const value = capture as { text?: unknown; paths?: unknown; image?: unknown };
     const item = clipboardHistoryProvider.capture({
@@ -114,13 +165,13 @@ export function registerIpc(deps: IpcDeps): void {
     if (item) sendToMainWindow(IPC.clipboardHistoryChanged, null);
     return item;
   });
-  ipcMain.handle(IPC.clipboardHistoryClear, () => {
+  guardedHandle(IPC.clipboardHistoryClear, () => {
     clipboardHistoryProvider.clear();
     sendToMainWindow(IPC.clipboardHistoryChanged, null);
     return { ok: true };
   });
 
-  ipcMain.handle(IPC.searchExecute, async (_e, result: SearchResult) => {
+  guardedHandle(IPC.searchExecute, async (_e, result: SearchResult) => {
     if (!result || typeof result.id !== "string") return { ok: false };
     try {
       usageRecord(result.id);
@@ -128,6 +179,9 @@ export function registerIpc(deps: IpcDeps): void {
         case "app": {
           if (!result.id.startsWith("app:")) return { ok: false };
           const appPath = result.id.slice(4);
+          if (!appProvider.getApps().some((app) => app.path === appPath)) {
+            return { ok: false, message: "应用已不存在，请刷新索引" };
+          }
           const error = process.platform === "linux"
             ? await execFileP("gio", ["launch", appPath], { timeout: 5000 }).then(() => null).catch((err: unknown) => String(err))
             : await shell.openPath(appPath);
@@ -135,8 +189,8 @@ export function registerIpc(deps: IpcDeps): void {
           return { ok: true };
         }
         case "file": {
-          const filePath = result.filePath ?? (result.id.startsWith("file:") ? result.id.slice(5) : "");
-          if (!filePath) return { ok: false, message: "文件路径无效" };
+          const filePath = result.id.startsWith("file:") ? result.id.slice(5) : "";
+          if (!filePath || !fileProvider.getFiles().some((file) => file.path === filePath)) return { ok: false, message: "文件已不存在，请刷新索引" };
           const error = await shell.openPath(filePath);
           return error ? { ok: false, message: error } : { ok: true };
         }
@@ -182,10 +236,15 @@ export function registerIpc(deps: IpcDeps): void {
           }
           const feature = p.manifest.features.find((f) => f.code === result.featureCode);
           if (!feature) return { ok: false };
+          const payload = result.payload ?? result.queryText ?? result.webQuery ?? "";
+          const input = payload && typeof payload === "object" && "type" in payload
+            ? { version: 1 as const, payload: payload as InputPayload }
+            : undefined;
           pluginHost.openPlugin(p, {
             code: feature.code,
-            type: result.cmdType ?? "text",
-            payload: result.payload ?? result.webQuery ?? "",
+            type: (result.cmdType ?? "text") as PluginCommandType,
+            payload: typeof payload === "string" ? payload : JSON.stringify(payload),
+            input,
           });
           return { ok: true };
         }
@@ -206,14 +265,89 @@ export function registerIpc(deps: IpcDeps): void {
     }
   });
 
-  ipcMain.on(IPC.searchHide, () => getMainWindow()?.hide());
-  ipcMain.on(IPC.uiOpenSettings, () => openSettingsWindow());
-  ipcMain.on(IPC.searchInput, (_e, text: string) => pluginHost.forwardSubInput(String(text ?? "")));
-  ipcMain.on(IPC.pluginExit, () => pluginHost.outPlugin());
+  guardedOn(IPC.searchHide, () => getMainWindow()?.hide());
+  guardedOn(IPC.uiOpenSettings, (_event, route: unknown) => {
+    if (!route || typeof route !== "object") {
+      openSettingsWindow();
+      return;
+    }
+    const value = route as Partial<SettingsRoute>;
+    const safe: SettingsRoute = { tab: typeof value.tab === "string" ? value.tab : "overview" };
+    if (value.view === "installed" || value.view === "market") safe.view = value.view;
+    if (typeof value.pluginId === "string" && /^[a-z0-9][a-z0-9-]*$/i.test(value.pluginId)) {
+      safe.pluginId = value.pluginId;
+    }
+    queueSettingsShowTab(safe);
+  });
+  guardedOn(IPC.uiOpenProfile, () => openSettingsWindow("overview"));
+  guardedOn(IPC.searchInput, (_e, text: string) => pluginHost.forwardSubInput(String(text ?? "")));
+  guardedOn(IPC.pluginExit, () => pluginHost.outPlugin());
+
+  guardedHandle(IPC.overviewData, () => {
+    const usage = usageAll();
+    const topApps = appProvider
+      .getApps()
+      .map((item) => ({ name: item.name, path: item.path, icon: item.icon, count: usage[`app:${item.path}`]?.count ?? 0 }))
+      .filter((item) => item.count > 0)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+    return { version: hostInfo().version, firstLaunchAt: settings.get().firstLaunchAt, topApps };
+  });
+  guardedHandle(IPC.overviewOpenApp, async (_e, appPath: unknown) => {
+    const target = String(appPath ?? "");
+    if (!appProvider.getApps().some((item) => item.path === target)) return { ok: false, error: "应用不存在" };
+    const error = await shell.openPath(target);
+    return error ? { ok: false, error } : { ok: true };
+  });
+
+  // ————— 已安装应用列表（插件模式拖拽兼容） —————
+  guardedHandle(IPC.appsList, () =>
+    appProvider.getApps().map((item) => ({ name: item.name, path: item.path, icon: item.icon })),
+  );
+
+  // ————— 插件脱离为独立窗口 —————
+  guardedHandle(IPC.pluginDetach, (_e, pluginName: unknown) => {
+    const name = String(pluginName ?? "");
+    if (!pluginManager.get(name)) return { ok: false, error: "插件不存在" };
+    if (getDetachedWindow(name)) return { ok: true, detached: true };
+    const ok = detachPluginWindow(pluginHost, name);
+    return ok ? { ok: true, detached: true } : { ok: false, error: "无法脱离主窗口" };
+  });
+  guardedHandle(IPC.pluginReattach, (_e, pluginName: unknown) => {
+    const name = String(pluginName ?? "");
+    const ok = reattachPluginWindow(pluginHost, name);
+    return { ok, detached: false };
+  });
+
+  ipcMain.handle(IPC.detachGetState, (e) => {
+    const state = findDetachedHostBySender(e.sender.id);
+    return state ? detachStateForWindow(state.window) : null;
+  });
+  ipcMain.on(IPC.detachInput, (e, value: unknown) => {
+    const state = findDetachedHostBySender(e.sender.id);
+    if (!state) return;
+    pluginHost.forwardDetachedSubInput(state.pluginName, String(value ?? ""));
+  });
+  ipcMain.handle(IPC.detachReattach, (e) => {
+    const state = findDetachedHostBySender(e.sender.id);
+    return state ? { ok: reattachPluginWindow(pluginHost, state.pluginName) } : { ok: false };
+  });
+  ipcMain.handle(IPC.detachClose, (e) => {
+    const state = findDetachedHostBySender(e.sender.id);
+    return state ? { ok: reattachPluginWindow(pluginHost, state.pluginName) } : { ok: false };
+  });
+  ipcMain.handle(IPC.detachToggleAlwaysOnTop, (e) => {
+    const state = findDetachedHostBySender(e.sender.id);
+    return state ? updateDetachedWindowState(state.pluginName, { alwaysOnTop: !state.alwaysOnTop }) : null;
+  });
+  ipcMain.handle(IPC.detachSetZoom, (e, zoom: unknown) => {
+    const state = findDetachedHostBySender(e.sender.id);
+    return state ? updateDetachedWindowState(state.pluginName, { zoomFactor: Number(zoom) }) : null;
+  });
 
   // ————— 配置 —————
-  ipcMain.handle(IPC.configGet, () => settings.get());
-  ipcMain.handle(IPC.configSet, (_e, patch: Record<string, unknown>): ConfigSetResult => {
+  guardedHandle(IPC.configGet, () => settings.get());
+  guardedHandle(IPC.configSet, (_e, patch: Record<string, unknown>): ConfigSetResult => {
     const safe: Record<string, unknown> = {};
     if (typeof patch.hotkey === "string") safe.hotkey = patch.hotkey;
     if (typeof patch.autostart === "boolean") safe.autostart = patch.autostart;
@@ -232,26 +366,62 @@ export function registerIpc(deps: IpcDeps): void {
     if (typeof patch.clipboardHistoryLimit === "number" && Number.isFinite(patch.clipboardHistoryLimit)) {
       safe.clipboardHistoryLimit = Math.max(1, Math.min(200, Math.floor(patch.clipboardHistoryLimit)));
     }
+    if (patch.pluginHotkeys !== null && typeof patch.pluginHotkeys === "object" && !Array.isArray(patch.pluginHotkeys)) {
+      const result: Record<string, string> = {};
+      for (const [key, accel] of Object.entries(patch.pluginHotkeys as Record<string, unknown>)) {
+        if (/^plugin:[^:]+:[^:]+$/.test(key) && typeof accel === "string" && accel.trim()) result[key] = accel.trim();
+      }
+      safe.pluginHotkeys = result;
+    }
+    const candidate = { ...settings.get(), ...safe };
+    const changesHotkeys = Object.prototype.hasOwnProperty.call(safe, "hotkey")
+      || Object.prototype.hasOwnProperty.call(safe, "pluginHotkeys");
+    const hotkey = changesHotkeys
+      ? applyConfiguredHotkeys(candidate, toggleViaHotkey)
+      : { ok: true, error: null };
+    if (!hotkey.ok) return { settings: settings.get(), hotkeyError: hotkey.error };
     const next = settings.set(safe);
-    const hotkey = applyHotkey(toggleViaHotkey);
     applyAutostart();
-    return { settings: next, hotkeyError: hotkey.error };
+    return { settings: next, hotkeyError: null };
   });
 
+  /** 依据配置与当前已启用插件注册 feature 级全局快捷键。 */
+  function syncExtraHotkeys(): string | null {
+    const handlers = new Map<string, () => void>();
+    for (const plugin of pluginManager.enabledPlugins()) {
+      for (const feature of plugin.manifest.features) {
+        handlers.set(`plugin:${plugin.manifest.name}:${feature.code}`, () => {
+          const win = getDetachedWindow(plugin.manifest.name);
+          if (win) {
+            win.show();
+            win.focus();
+            return;
+          }
+          pluginHost.openPlugin(plugin, { code: feature.code, type: "text", payload: "" });
+        });
+      }
+    }
+    return setExtraHotkeyHandlers(handlers);
+  }
+
+  configuredHotkeySync = syncExtraHotkeys;
+  syncExtraHotkeys();
+  pluginManager.onChange(syncExtraHotkeys);
+
   // ————— 插件市场 —————
-  ipcMain.handle(IPC.marketFetch, (_e, keyword: unknown) =>
+  guardedHandle(IPC.marketFetch, (_e, keyword: unknown) =>
     marketService.fetchMarket(typeof keyword === "string" ? keyword : ""),
   );
-  ipcMain.handle(IPC.marketInstall, async (_e, pluginId: unknown) => {
+  guardedHandle(IPC.marketInstall, async (_e, pluginId: unknown) => {
     const preview = await marketService.installFromMarket(String(pluginId ?? ""));
     if (!preview) return null;
     return preview;
   });
 
   // ————— 插件管理 —————
-  ipcMain.handle(IPC.pluginList, () => pluginManager.list());
+  guardedHandle(IPC.pluginList, () => pluginManager.list());
 
-  ipcMain.handle(IPC.pluginInstallPreview, async () => {
+  guardedHandle(IPC.pluginInstallPreview, async () => {
     const parent = getSettingsWindow() ?? getMainWindow() ?? undefined;
     const picked = await dialog.showOpenDialog(parent as BrowserWindow, {
       title: "选择插件包",
@@ -267,42 +437,51 @@ export function registerIpc(deps: IpcDeps): void {
       version: staged.manifest.version,
       description: staged.manifest.description,
       permissions: [...staged.manifest.permissions],
+      securityMode: getPluginSecurityMode(staged.manifest),
       logo: staged.logoDataUrl,
     };
     return { preview, conflict: staged.conflict };
   });
 
-  ipcMain.handle(IPC.pluginInstallConfirm, async (_e, stagingId: string, options?: { cancel?: boolean }) => {
+  guardedHandle(IPC.pluginInstallConfirm, async (_e, stagingId: string, options?: { cancel?: boolean }) => {
     if (options?.cancel) {
       discardInstall(String(stagingId));
       return { ok: true };
     }
     const manifest = await commitInstall(String(stagingId));
     pluginManager.reloadAll();
+    reattachPluginWindow(pluginHost, manifest.name);
     pluginHost.destroyView(manifest.name);
     logger.info("ipc", `插件安装完成: ${manifest.name}`);
     return { ok: true, name: manifest.name };
   });
 
-  ipcMain.on(IPC.pluginEnable, (_e, name: string) => {
+  guardedOn(IPC.pluginEnable, (_e, name: string) => {
     pluginManager.setEnabled(String(name), true);
     pluginHost.destroyView(String(name));
   });
-  ipcMain.on(IPC.pluginDisable, (_e, name: string) => {
-    pluginManager.setEnabled(String(name), false);
-    pluginHost.destroyView(String(name));
+  guardedOn(IPC.pluginDisable, (_e, name: string) => {
+    const pluginName = String(name);
+    reattachPluginWindow(pluginHost, pluginName);
+    pluginManager.setEnabled(pluginName, false);
+    pluginHost.destroyView(pluginName);
   });
-  ipcMain.handle(IPC.pluginUninstall, (_e, name: string) => {
+  guardedHandle(IPC.pluginUninstall, (_e, name: string) => {
     const pluginName = String(name);
     const current = pluginManager.get(pluginName);
     if (!current) return { ok: false, error: "插件不存在" };
     if (current.source === "dev") return { ok: false, error: "开发插件请在设置中移除开发目录" };
+    reattachPluginWindow(pluginHost, pluginName);
     pluginHost.destroyView(pluginName);
+    const pluginHotkeys = Object.fromEntries(
+      Object.entries(settings.get().pluginHotkeys).filter(([key]) => !key.startsWith(`plugin:${pluginName}:`)),
+    );
+    settings.set({ pluginHotkeys });
     pluginManager.clearPluginData(pluginName);
     pluginManager.uninstall(pluginName);
     return { ok: true };
   });
-  ipcMain.handle(IPC.pluginAddDevPath, async () => {
+  guardedHandle(IPC.pluginAddDevPath, async () => {
     const parent = getSettingsWindow() ?? getMainWindow() ?? undefined;
     const picked = await dialog.showOpenDialog(parent as BrowserWindow, {
       title: "选择插件开发目录（包含 plugin.json）",
@@ -316,7 +495,7 @@ export function registerIpc(deps: IpcDeps): void {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   });
-  ipcMain.on(IPC.pluginRemoveDevPath, (_e, dir: string) => {
+  guardedOn(IPC.pluginRemoveDevPath, (_e, dir: string) => {
     const target = String(dir);
     const p = pluginManager.all().find((plugin) => plugin.source === "dev" && plugin.dir === target);
     if (p) pluginHost.destroyView(p.manifest.name);
@@ -324,18 +503,18 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   // ————— 更新 —————
-  ipcMain.handle(IPC.updaterState, () => updaterState());
-  ipcMain.handle(IPC.updaterCheck, () => checkForUpdates(false));
-  ipcMain.on(IPC.updaterInstall, () => installUpdate());
+  guardedHandle(IPC.updaterState, () => updaterState());
+  guardedHandle(IPC.updaterCheck, () => checkForUpdates(false));
+  guardedOn(IPC.updaterInstall, () => installUpdate());
   onUpdateEvent((s) => {
     sendToSettings(IPC.updaterEvent, s);
     if (s.status === "downloaded") toast(`新版本 ${s.info?.version} 已就绪，重启后生效`);
   });
 
   // ————— 应用 —————
-  ipcMain.handle(IPC.appInfo, () => hostInfo());
-  ipcMain.on(IPC.appQuit, () => deps.onQuitRequest());
-  ipcMain.on(IPC.appOpenLogs, () => void shell.openPath(logsDir()));
+  guardedHandle(IPC.appInfo, () => hostInfo());
+  guardedOn(IPC.appQuit, () => deps.onQuitRequest());
+  guardedOn(IPC.appOpenLogs, () => void shell.openPath(logsDir()));
 
   // ————— 插件沙箱 IPC —————
   pluginHost.registerIpc();

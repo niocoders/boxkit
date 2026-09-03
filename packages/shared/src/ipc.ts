@@ -2,6 +2,71 @@
  * 全部 IPC 通道名的唯一定义。
  * 命名约定：<域>:<动作>，渲染层/插件层只允许调用这里列出的通道。
  */
+export const IPC_FORBIDDEN = "FORBIDDEN" as const;
+
+export interface IpcForbidden {
+  ok: false;
+  code: typeof IPC_FORBIDDEN;
+  message: string;
+}
+
+export function forbidden(message = "IPC 调用者无权执行此操作"): IpcForbidden {
+  return { ok: false, code: IPC_FORBIDDEN, message };
+}
+
+export type IpcRole = "search" | "settings" | "profile" | "detach-host" | `plugin:${string}`;
+
+/** 从受信任窗口页面 URL 推导页面角色；远程/未知页面一律无角色。 */
+export function ipcRoleForUrl(rawUrl: string): IpcRole | null {
+  if (typeof rawUrl !== "string" || !rawUrl) return null;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === "bk-plugin:" && parsed.hostname) return `plugin:${parsed.hostname}`;
+    if (parsed.protocol !== "file:" && parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    const page = decodeURIComponent(parsed.pathname).replace(/\\/g, "/").toLowerCase();
+    if (page.endsWith("/renderer/search/index.html") || page.endsWith("/search/index.html")) return "search";
+    if (page.endsWith("/renderer/settings/index.html") || page.endsWith("/settings/index.html")) return "settings";
+    if (page.endsWith("/renderer/profile/index.html") || page.endsWith("/profile/index.html")) return "profile";
+    if (page.endsWith("/renderer/detach/index.html") || page.endsWith("/detach/index.html")) return "detach-host";
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/** 应用页面的最小通道角色矩阵；插件角色默认不在应用 IPC 白名单内。 */
+export function isIpcRoleAllowed(role: IpcRole, channel: string): boolean {
+  if (role.startsWith("plugin:")) return false;
+  const commonSearch = new Set<string>([
+    IPC.searchQuery, IPC.searchExecute, IPC.searchHide, IPC.searchInput,
+    IPC.favoritesGet, IPC.favoritesPin, IPC.favoritesUnpin,
+    IPC.clipboardHistoryQuery, IPC.clipboardHistoryCapture, IPC.clipboardHistoryClear,
+    IPC.uiOpenSettings, IPC.uiOpenProfile, IPC.pluginExit, IPC.pluginDetach, IPC.pluginReattach,
+  ]);
+  if (role === "search") return commonSearch.has(channel);
+  if (role === "settings") {
+    return new Set<string>([
+      IPC.configGet, IPC.configSet, IPC.appsList,
+      IPC.overviewData, IPC.overviewOpenApp,
+      IPC.pluginList, IPC.pluginInstallPreview, IPC.pluginInstallConfirm,
+      IPC.pluginEnable, IPC.pluginDisable, IPC.pluginUninstall,
+      IPC.pluginAddDevPath, IPC.pluginRemoveDevPath,
+      IPC.settingsReady, IPC.marketFetch, IPC.marketInstall,
+      IPC.updaterState, IPC.updaterCheck, IPC.updaterInstall,
+      IPC.appInfo, IPC.appQuit, IPC.appOpenLogs,
+    ]).has(channel);
+  }
+  if (role === "profile") return false;
+  if (role === "detach-host") {
+    return new Set<string>([
+      IPC.detachGetState, IPC.detachInput, IPC.detachReattach, IPC.detachClose,
+      IPC.detachToggleAlwaysOnTop, IPC.detachSetZoom,
+      IPC.uiOpenSettings,
+    ]).has(channel);
+  }
+  return false;
+}
+
 export const IPC = {
   // —— 主搜索窗（search renderer ↔ main）——
   searchQuery: "search:query",
@@ -24,6 +89,23 @@ export const IPC = {
   pluginState: "plugin:state", // main → search renderer：搜索/插件模式切换
   uiToast: "ui:toast", // main → renderer：气泡通知
   uiOpenSettings: "ui:open-settings", // renderer → main：底栏入口打开设置窗
+  uiOpenProfile: "ui:open-profile", // renderer → main：头像入口打开本地概览
+
+  // —— 应用（search/settings renderer ↔ main）——
+  appsList: "apps:list", // invoke：已扫描应用列表
+  appsChanged: "apps:changed", // main → settings renderer：应用扫描完成
+  pluginDetach: "plugin:detach", // plugin mode renderer → main：插件脱离为独立窗口
+  pluginReattach: "plugin:reattach",
+  detachGetState: "detach:get-state", // detach preload → main：读取独立窗口状态
+  detachState: "detach:state", // main → detach preload：独立窗口状态变化
+  detachInput: "detach:input", // detach preload → main：独立窗口子输入
+  detachFocusInput: "detach:focus-input", // main → detach preload
+  detachSelectInput: "detach:select-input", // main → detach preload
+  detachBlurInput: "detach:blur-input", // main → detach preload
+  detachReattach: "detach:reattach", // detach preload → main：归还主面板
+  detachClose: "detach:close", // detach preload → main：关闭并归还
+  detachToggleAlwaysOnTop: "detach:toggle-always-on-top", // detach preload → main
+  detachSetZoom: "detach:set-zoom", // detach preload → main
 
   // —— 配置（settings renderer ↔ main，search 也会读取）——
   configGet: "config:get",
@@ -58,6 +140,8 @@ export const IPC = {
   appInfo: "app:info",
   appQuit: "app:quit",
   appOpenLogs: "app:open-logs",
+  overviewData: "overview:data",
+  overviewOpenApp: "overview:open-app",
 
   // —— 插件沙箱（plugin preload ↔ main，经白名单校验）——
   pkInfo: "pk:info",

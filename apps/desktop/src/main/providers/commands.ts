@@ -126,7 +126,7 @@ const COMMON: SystemCommand[] = [
     id: "quit",
     title: "退出 BoxKit",
     keywords: ["quit", "退出", "关闭"],
-    builtinIcon: "⏻",
+    builtinIcon: "🚪",
     special: "quit",
   },
 ];

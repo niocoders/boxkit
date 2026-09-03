@@ -1,4 +1,4 @@
-import type { ClipboardHistoryItem, PluginFeature, SearchResult } from "@boxkit/shared";
+import type { ClipboardHistoryItem, InputPayload, PluginCommandType, PluginFeature, SearchResult } from "@boxkit/shared";
 
 /** 搜索引擎输入的各 Provider 数据快照（由主进程组装，纯函数便于测试）。 */
 export interface EngineApp {
@@ -38,8 +38,8 @@ export interface EngineDeps {
   files?: EngineFile[];
   clipboard?: ClipboardHistoryItem[];
   pinnedIds?: string[];
-  /** 使用频率统计（id → 次数/最近使用），用于排序加权与「最近使用」 */
   usage?: Record<string, { count: number; last: number }>;
+  input?: import("@boxkit/shared").InputPayload;
 }
 
 function platformMatches(platform: string | string[] | undefined): boolean {
@@ -137,14 +137,16 @@ function resultPinned(id: string, pinned: Set<string>): boolean {
   return pinned.has(id);
 }
 
-export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
-  const q = text.trim();
+export function searchQuery(text: string | InputPayload, deps: EngineDeps): SearchResult[] {
+  const input = typeof text === "string" ? undefined : text;
+  const q = typeof text === "string" ? text.trim() : text.type === "text" ? text.text.trim() : "";
+  const inputKind: "text" | "img" | "files" = input?.type ?? "text";
   const usage = deps.usage ?? {};
   const pinned = new Set(deps.pinnedIds ?? []);
   const results: SearchResult[] = [];
   const boost = (id: string) => Math.min(15, (usage[id]?.count ?? 0) * 2);
 
-  if (!q) {
+  if (!q && !input) {
     const recentIds = Object.entries(usage)
       .filter(([, u]) => u.count > 0)
       .sort((a, b) => b[1].last - a[1].last || b[1].count - a[1].count)
@@ -237,15 +239,16 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
   for (const f of deps.features) {
     if (!platformMatches(f.feature.platform)) continue;
     let best: number | null = null;
-    let bestType: "text" | "regex" | "over" = "text";
+    let bestType: PluginCommandType = "text";
     for (const cmd of f.feature.cmds) {
       if (typeof cmd === "string") {
+        if (inputKind !== "text") continue;
         const s = matchScore(q, cmd);
         if (s !== null && (best === null || s > best)) {
           best = s + 8;
           bestType = q === cmd.trim().toLowerCase() ? "over" : "text";
         }
-      } else if (cmd.type === "regex" && cmd.match) {
+      } else if (cmd.type === "regex" && inputKind === "text" && cmd.match) {
         const min = cmd.minLength ?? 1;
         if (q.length >= min && compiledRegex(cmd.match)?.test(q)) {
           if (best === null || 60 > best) {
@@ -253,11 +256,36 @@ export function searchQuery(text: string, deps: EngineDeps): SearchResult[] {
             bestType = "regex";
           }
         }
+      } else if ((cmd.type === "text" || cmd.type === "over") && inputKind === "text" && (cmd.match || cmd.cmd || cmd.label)) {
+        const match = cmd.match ?? cmd.cmd ?? cmd.label ?? "";
+        const min = cmd.minLength ?? 1;
+        if (q.length >= min && matchScore(q, match) !== null) {
+          const s = matchScore(q, match) ?? 0;
+          if (best === null || s > best) {
+            best = s;
+            bestType = cmd.type as PluginCommandType;
+          }
+        }
+      } else if (cmd.type === "img" && inputKind === "img") {
+        best = Math.max(best ?? 0, 80);
+        bestType = "img";
+      } else if (cmd.type === "files" && inputKind === "files") {
+        const accepts = cmd.fileType;
+        const files = input?.type === "files" ? input.files : [];
+        const accepted = !accepts || files.some((file) => {
+          const ext = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase() : "";
+          const list = Array.isArray(accepts) ? accepts : [accepts];
+          return list.some((value) => String(value).toLowerCase() === ext || String(value).toLowerCase() === file.kind);
+        });
+        if (accepted) {
+          best = Math.max(best ?? 0, 80);
+          bestType = "files";
+        }
       }
     }
     if (best !== null) {
       const id = `plugin:${f.pluginId}:${f.feature.code}`;
-      pushResult(results, { id, title: f.feature.explain, subtitle: f.displayName, icon: f.logo, kind: "plugin", score: best + boost(id), pinned: resultPinned(id, pinned), pluginId: f.pluginId, featureCode: f.feature.code, cmdType: bestType, pluginCmds: f.feature.cmds.map((c) => typeof c === "string" ? c : commandLabel(c, f.feature.explain)) });
+      pushResult(results, { id, title: f.feature.explain, subtitle: f.displayName, icon: f.logo, kind: "plugin", score: best + boost(id), pinned: resultPinned(id, pinned), pluginId: f.pluginId, featureCode: f.feature.code, cmdType: bestType, payload: input ?? q, queryText: q, input: input ? { version: 1, payload: input } : undefined, pluginCmds: f.feature.cmds.map((c) => typeof c === "string" ? c : commandLabel(c, f.feature.explain)) });
     }
   }
 

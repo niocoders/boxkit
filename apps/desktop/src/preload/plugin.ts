@@ -1,5 +1,5 @@
-import { ipcRenderer } from "electron";
-// 插件 preload 在受控兼容视图中运行，可直接挂载全局 API。
+import { contextBridge, ipcRenderer } from "electron";
+// 插件 preload 在受控兼容视图中运行；安全模式只通过 contextBridge 暴露白名单 API。
 import { IPC } from "@boxkit/shared/ipc";
 
 /**
@@ -322,14 +322,47 @@ export interface BrowserWindowHandle {
   send(channel: string, data: unknown): void;
 }
 
-// —— 挂全局（contextIsolation 关闭：页面与 preload 同上下文） ——
-(window as unknown as Record<string, unknown>).bk = bk;
-(window as unknown as Record<string, unknown>)[["u", "tools"].join("")] = legacyApi;
-
-// 最后加载插件自带的 preload.js
-// 主进程通过 webPreferences.additionalArguments 传入插件 preload 绝对路径
 const preloadArg = process.argv.find((a) => a.startsWith("--boxkit-plugin-preload="));
-if (preloadArg) {
+const securityArg = process.argv.find((a) => a.startsWith("--boxkit-plugin-security="));
+const securityMode = securityArg?.split("=").slice(1).join("=") === "legacy-trusted"
+  ? "legacy-trusted"
+  : "sandbox";
+const permissionsArg = process.argv.find((a) => a.startsWith("--boxkit-plugin-permissions="));
+const permissions = new Set((permissionsArg?.split("=").slice(1).join("=") ?? "").split(",").filter(Boolean));
+
+const guardedBk = {
+  ...bk,
+  ...(permissions.has("window") ? {} : {
+    setSubInput: undefined,
+    removeSubInput: undefined,
+    setSubInputValue: undefined,
+    subInputFocus: undefined,
+    subInputSelect: undefined,
+    subInputBlur: undefined,
+    setViewHeightRatio: undefined,
+  }),
+  ...(permissions.has("notify") ? {} : { notify: undefined }),
+  ...(permissions.has("clipboard") ? {} : {
+    copyText: undefined,
+    readClipboardText: undefined,
+    writeClipboardText: undefined,
+  }),
+  ...(permissions.has("db") ? {} : { db: undefined }),
+  ...(permissions.has("shell") ? {} : { openExternal: undefined }),
+  ...(permissions.has("screen") ? {} : { getPrimaryDisplaySize: undefined }),
+};
+
+if (securityMode === "legacy-trusted") {
+  // legacy 页面与宿主 preload 同上下文，兼容既有 Node/preload 插件。
+  (window as unknown as Record<string, unknown>).bk = bk;
+  (window as unknown as Record<string, unknown>)[["u", "tools"].join("")] = legacyApi;
+} else {
+  contextBridge.exposeInMainWorld("bk", guardedBk);
+}
+
+// 仅 legacy 档位允许执行插件自带 Node preload。
+if (securityMode === "legacy-trusted" && preloadArg) {
+
   const pluginPreload = preloadArg.split("=").slice(1).join("=");
   try {
     if (pluginPreload) {

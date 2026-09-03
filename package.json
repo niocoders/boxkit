@@ -27,6 +27,7 @@
   "scripts": {
     "dev": "pnpm --filter @boxkit/desktop dev",
     "build": "pnpm --filter @boxkit/desktop build",
+    "build:sdk": "pnpm --filter @boxkit/sdk build",
     "start": "pnpm --filter @boxkit/desktop start",
     "pack": "pnpm --filter @boxkit/desktop pack",
     "dist": "pnpm --filter @boxkit/desktop dist",
@@ -34,7 +35,9 @@
     "test": "vitest run",
     "icons": "node tools/gen-icons.mjs",
     "audit:governance": "node tools/audit-governance.mjs",
-    "ui:smoke": "node tools/electron-ui-smoke.mjs"
+    "ui:smoke": "node tools/electron-ui-smoke.mjs",
+    "compat:smoke": "node tools/electron-compat-smoke.mjs",
+    "verify": "node tools/verify.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.55.0",

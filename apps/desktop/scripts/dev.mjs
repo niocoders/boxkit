@@ -41,8 +41,8 @@ const esbCtxs = await Promise.all([
   }),
   context({
     ...esbCommon,
-    entryPoints: [path.join(appRoot, "src/preload/plugin.ts")],
-    outfile: path.join(appRoot, "dist/preload/plugin.js"),
+    entryPoints: [path.join(appRoot, "src/preload/detach.ts")],
+    outfile: path.join(appRoot, "dist/preload/detach.js"),
   }),
 ]);
 await Promise.all(esbCtxs.map((c) => c.watch()));

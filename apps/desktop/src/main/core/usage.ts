@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { userDataDir } from "./paths.js";
 import { logger } from "./logger.js";
+import { quarantineJsonFile, writeJsonAtomically } from "./config.js";
 
 /**
  * 使用频率统计：用得越多越靠前；空面板展示「最近使用」。
@@ -12,10 +13,13 @@ export interface UsageEntry {
   last: number;
 }
 
+export const USAGE_SCHEMA_VERSION = 1;
 const MAX_ENTRIES = 2000;
 const FLUSH_MS = 1500;
 
-let data: Record<string, UsageEntry> = {};
+type UsageData = Record<string, UsageEntry>;
+
+let data: UsageData = {};
 let loaded = false;
 let flushTimer: NodeJS.Timeout | null = null;
 
@@ -23,15 +27,76 @@ function file(): string {
   return path.join(userDataDir(), "usage.json");
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeUsage(value: unknown): UsageData {
+  if (!isObject(value)) throw new Error("usage 数据根节点必须是对象");
+  const result: UsageData = {};
+  for (const [id, entry] of Object.entries(value)) {
+    if (!isObject(entry)) continue;
+    const count = entry.count;
+    const last = entry.last;
+    if (typeof count !== "number" || !Number.isFinite(count) || count < 0) continue;
+    if (typeof last !== "number" || !Number.isFinite(last) || last < 0) continue;
+    result[id] = { count, last };
+    if (Object.keys(result).length >= MAX_ENTRIES) break;
+  }
+  return result;
+}
+
+/** Read legacy flat usage data or the current versioned envelope. */
+export function migrateUsage(input: unknown): UsageData {
+  if (!isObject(input)) throw new Error("usage 数据根节点必须是对象");
+  if (input.schemaVersion === undefined) return normalizeUsage(input);
+  if (input.schemaVersion !== USAGE_SCHEMA_VERSION) {
+    throw new Error(`usage schemaVersion 不支持: ${String(input.schemaVersion)}`);
+  }
+  return normalizeUsage(input.entries);
+}
+
+function persistedUsage(): { schemaVersion: number; entries: UsageData } {
+  return { schemaVersion: USAGE_SCHEMA_VERSION, entries: data };
+}
+
+function readUsage(filePath: string): UsageData {
+  return migrateUsage(JSON.parse(fs.readFileSync(filePath, "utf8")));
+}
+
 function load(): void {
   if (loaded) return;
   loaded = true;
+  const current = file();
+  let needsSave = false;
   try {
-    const raw = fs.readFileSync(file(), "utf-8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") data = parsed;
-  } catch {
-    /* 首次或损坏：从空开始 */
+    const raw = JSON.parse(fs.readFileSync(current, "utf8")) as unknown;
+    data = migrateUsage(raw);
+    needsSave = !isObject(raw) || raw.schemaVersion !== USAGE_SCHEMA_VERSION;
+  } catch (error) {
+    if (fs.existsSync(current)) {
+      logger.warn("usage", "usage.json 损坏，已隔离原文件", error);
+      quarantineJsonFile(current, "usage-load-failed");
+    }
+    try {
+      if (fs.existsSync(`${current}.bak`)) {
+        data = readUsage(`${current}.bak`);
+        needsSave = true;
+        logger.warn("usage", "已从 usage.json.bak 恢复");
+      } else {
+        data = {};
+      }
+    } catch (backupError) {
+      data = {};
+      logger.warn("usage", "usage 备份不可用，使用空数据", backupError);
+    }
+  }
+  if (needsSave) {
+    try {
+      writeJsonAtomically(current, persistedUsage());
+    } catch (error) {
+      logger.warn("usage", "usage.json 迁移写入失败", error);
+    }
   }
 }
 
@@ -40,7 +105,7 @@ function scheduleFlush(): void {
   flushTimer = setTimeout(() => {
     flushTimer = null;
     try {
-      fs.writeFileSync(file(), JSON.stringify(data));
+      writeJsonAtomically(file(), persistedUsage());
     } catch (e) {
       logger.warn("usage", "usage.json 写入失败", e);
     }
@@ -62,19 +127,19 @@ export function usageRecord(id: string): void {
   scheduleFlush();
 }
 
-export function usageAll(): Record<string, UsageEntry> {
+export function usageAll(): UsageData {
   load();
   return data;
 }
 
 /** before-quit 时同步落盘 */
 export function usageFlush(): void {
-  if (!loaded || !flushTimer) return;
+  if (!loaded) return;
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = null;
   try {
-    fs.writeFileSync(file(), JSON.stringify(data));
-  } catch {
-    /* 尽力而为 */
+    writeJsonAtomically(file(), persistedUsage());
+  } catch (error) {
+    logger.warn("usage", "usage.json 写入失败", error);
   }
 }

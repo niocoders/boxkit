@@ -2,8 +2,10 @@ import type {
   AppSettings,
   ConfigSetResult,
   InstallPreview,
+  LocalOverviewData,
   MarketPlugin,
   PluginListItem,
+  SettingsRoute,
   UpdateState,
 } from "@boxkit/shared";
 
@@ -11,6 +13,11 @@ export interface SettingsBridge {
   settingsReady(): void;
   configGet(): Promise<AppSettings>;
   configSet(patch: Partial<AppSettings>): Promise<ConfigSetResult>;
+  overviewData(): Promise<LocalOverviewData>;
+  overviewOpenApp(path: string): Promise<{ ok: boolean; error?: string }>;
+  clipboardHistory: {
+    clear(): Promise<unknown>;
+  };
   plugins: {
     list(): Promise<PluginListItem[]>;
     installPreview(): Promise<{ preview: InstallPreview; conflict: string } | null>;
@@ -32,7 +39,7 @@ export interface SettingsBridge {
   checkUpdate(): Promise<UpdateState>;
   installUpdate(): void;
   onUpdateEvent(cb: (s: UpdateState) => void): () => void;
-  onSettingsShowTab(cb: (p: { tab: string; view?: string }) => void): () => void;
+  onSettingsShowTab(cb: (p: SettingsRoute) => void): () => void;
   onInstallPreview(cb: (p: { preview: InstallPreview; conflict: string }) => void): () => void;
   appInfo(): Promise<{
     version: string;

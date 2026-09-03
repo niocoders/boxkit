@@ -1,6 +1,47 @@
 /** BoxKit 全局共享类型（主进程 / 渲染层 / 插件 SDK 三方一致）。 */
 
-/** 插件权限清单：未在 plugin.json 声明的权限，主进程一律拒绝调用。 */
+/** 当前插件输入协议版本。 */
+export const INPUT_PAYLOAD_VERSION = 1 as const;
+export type InputPayloadVersion = typeof INPUT_PAYLOAD_VERSION;
+export type InputTextSource = "typed" | "paste" | "selection";
+
+export interface TextInputPayload {
+  type: "text";
+  text: string;
+  source: InputTextSource;
+}
+
+export interface ImageInputPayload {
+  type: "img";
+  mime: string;
+  size: number;
+  /** 宿主临时文件/句柄引用，不是图片内容本身。 */
+  tempRef: string;
+  /** 小图片可作为一次性内存 payload 传递，禁止持久化。 */
+  data?: Uint8Array;
+}
+
+export interface FileInputItem {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+}
+
+export interface FilesInputPayload {
+  type: "files";
+  files: FileInputItem[];
+}
+
+/** 插件搜索和启动时使用的 typed 输入。 */
+export type InputPayload = TextInputPayload | ImageInputPayload | FilesInputPayload;
+export interface VersionedInputPayload {
+  version: InputPayloadVersion;
+  payload: InputPayload;
+}
+
+/** feature 命令的命中类型；img/files 表示对应的 typed input。 */
+export type PluginCommandType = "text" | "regex" | "over" | "img" | "files";
+
 export const PLUGIN_PERMISSIONS = [
   "clipboard",
   "db",
@@ -11,6 +52,15 @@ export const PLUGIN_PERMISSIONS = [
   "window",
 ] as const;
 export type PluginPermission = (typeof PLUGIN_PERMISSIONS)[number];
+
+/** 插件运行安全档位。sandbox 是默认档位；legacy-trusted 明确允许 Node/preload。 */
+export const PLUGIN_SECURITY_MODES = ["sandbox", "legacy-trusted"] as const;
+export type PluginSecurityMode = (typeof PLUGIN_SECURITY_MODES)[number];
+
+export const PLUGIN_SECURITY_MODE_EXPLAIN: Record<PluginSecurityMode, string> = {
+  sandbox: "安全模式：Node 集成关闭，context isolation 与 Chromium sandbox 已开启",
+  "legacy-trusted": "完全信任模式：插件可执行 Node/preload 本地代码，不提供安全沙箱",
+};
 
 export const PERMISSION_EXPLAIN: Record<PluginPermission, string> = {
   clipboard: "读取和写入系统剪贴板",
@@ -42,19 +92,49 @@ export interface SearchResult {
   /** kind=plugin 时有效 */
   pluginId?: string;
   featureCode?: string;
-  /** 命中方式：text=关键字片段 over=关键字全匹配 regex=正则命中 */
-  cmdType?: "text" | "regex" | "over";
+  /** 命中方式：text=关键字片段 over=关键字全匹配 regex=正则命中。 */
+  cmdType?: PluginCommandType;
+  /** kind=plugin 时的原始文本查询，用于异步刷新后的 payload 兜底。 */
+  queryText?: string;
   /** kind=web 时有效：搜索词 */
   webQuery?: string;
   /** kind=plugin 时有效：该 feature 的全部关键字（兼容副命令，→ 展开候选） */
   pluginCmds?: string[];
-  /** 执行时透传给插件的 payload（副命令选中时为其关键字文本） */
-  payload?: string;
+  /**
+   * kind=plugin 时的原始输入。typed 查询保留调用方传入的对象引用，
+   * 旧字符串查询保留原始字符串，供启动适配层兼容 legacy 插件。
+   */
+  payload?: InputPayload | string;
+  /** 当输入是 typed payload 时使用；旧插件仍读取 payload 字符串。 */
+  input?: VersionedInputPayload;
   /** 空态网格分组：recent=最近使用 pinned=已固定 plugin=插件功能 market=市场精选 */
   section?: "recent" | "pinned" | "plugin" | "market";
 }
 
 export type SearchMode = "search" | "plugin";
+
+/** 独立插件窗口宿主工具栏固定高度，单位为 DIP。 */
+export const DETACH_TOOLBAR_HEIGHT = 40;
+
+export interface DetachSubInputState {
+  placeholder: string;
+  value: string;
+}
+
+export interface DetachHostState {
+  pluginName: string;
+  displayName: string;
+  subinput: DetachSubInputState | null;
+  alwaysOnTop: boolean;
+  zoomFactor: number;
+}
+
+/** 设置窗口导航目标；pluginId 用于直达单个已安装插件的设置。 */
+export interface SettingsRoute {
+  tab: string;
+  view?: "installed" | "market";
+  pluginId?: string;
+}
 
 /** 主窗推送的插件模式状态。 */
 export interface PluginModeState {
@@ -78,6 +158,8 @@ export interface PluginListItem {
   path: string;
   enabled: boolean;
   permissions: string[];
+  /** 由 manifest 归一化得到；旧 IPC 客户端缺失时必须按未知档位处理。 */
+  securityMode?: PluginSecurityMode;
   features: { code: string; explain: string; cmds: string[] }[];
 }
 
@@ -88,6 +170,8 @@ export interface InstallPreview {
   version: string;
   description?: string;
   permissions: PluginPermission[];
+  /** 由 manifest 归一化得到；缺失时安装界面不得假定 legacy 或无风险。 */
+  securityMode?: PluginSecurityMode;
   /** logo data URL，供确认弹窗展示 */
   logo?: string;
 }
@@ -131,6 +215,16 @@ export interface ClipboardCapture {
   image?: Uint8Array;
 }
 
+/** 本地概览数据：仅来自本机统计和已安装应用。 */
+export interface LocalOverviewData {
+  version: string;
+  firstLaunchAt: number;
+  topApps: { name: string; path: string; icon?: string; count: number }[];
+}
+
+/** 快捷键注册目标：主面板或自身插件的 feature。 */
+export type HotkeyTarget = "main" | `plugin:${string}:${string}`;
+
 export interface AppSettings {
   hotkey: string;
   autostart: boolean;
@@ -148,6 +242,10 @@ export interface AppSettings {
   clipboardHistoryEnabled: boolean;
   /** 剪贴板历史最大条数，主进程仍会执行硬上限。 */
   clipboardHistoryLimit: number;
+  /** 插件快捷键：`plugin:<插件名>:<featureCode>` → 全局快捷键。 */
+  pluginHotkeys: Record<string, string>;
+  /** 旧版本应用快捷键配置，仅为迁移兼容保留，不再注册或展示。 */
+  appHotkeys?: Record<string, string>;
 }
 
 /** configSet 的返回：设置 + 快捷键应用结果（冲突时给出提示） */

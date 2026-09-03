@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { PLUGIN_PERMISSIONS } from "./types.js";
+import { PLUGIN_PERMISSIONS, type PluginSecurityMode } from "./types.js";
+
+const semverSchema = z.string().regex(/^\d+\.\d+\.\d+(-[\w.]+)?$/, "version 需符合 semver，如 1.0.0");
+const platformSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
 
 /**
  * 插件资源路径必须是插件根目录内的相对路径。
@@ -12,21 +15,23 @@ export function isSafePluginPath(value: unknown): value is string {
   return parts.every((part) => part !== ".." && part !== "");
 }
 
-/** 插件 feature 的 cmd：字符串或 legacy 风格对象。 */
+/** 插件 feature 的 cmd：字符串或 typed/legacy 风格对象。 */
 export const cmdSchema = z.union([
   z.string().min(1),
   z
     .object({
-      /** regex / img / files / window / over 等 legacy 类型，未知类型保留给插件自行处理 */
+      /** text / regex / img / files / over 等类型，未知类型保留给插件自行处理。 */
       type: z.string().min(1).default("regex"),
-      /** regex cmd 使用；img/files/window 等 legacy cmd 不要求 match */
+      /** text/regex/over cmd 使用；img/files cmd 不要求 match。 */
       match: z.string().min(1).optional(),
+      /** 部分 legacy 清单使用 cmd 保存匹配文本。 */
+      cmd: z.string().min(1).optional(),
       minLength: z.number().int().min(1).max(200).optional(),
       /** legacy 风格：最少输入字符数（与 minLength 等价，读取时已归一） */
       minNum: z.number().int().min(1).max(200).optional(),
       explain: z.string().optional(),
       label: z.string().optional(),
-      fileType: z.array(z.string()).optional(),
+      fileType: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
       maxLength: z.number().int().min(1).max(10000).optional(),
     })
     .passthrough()
@@ -36,6 +41,13 @@ export const cmdSchema = z.union([
           code: z.ZodIssueCode.custom,
           path: ["match"],
           message: "regex 命令必须包含 match",
+        });
+      }
+      if (["text", "over"].includes(value.type) && !value.match && !value.cmd && !value.label) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["match"],
+          message: `${value.type} 命令必须包含 match/cmd/label`,
         });
       }
     }),
@@ -59,6 +71,19 @@ export const featureSchema = z
 export type PluginFeature = z.infer<typeof featureSchema>;
 
 export const permissionsSchema = z.enum(PLUGIN_PERMISSIONS);
+
+/**
+ * 根据清单判断实际运行档位。只要声明 preload 或使用 legacy pluginName，
+ * 就必须进入完全信任模式；permissions 为空本身永远不代表全权限。
+ */
+export function getPluginSecurityMode(manifest: {
+  pluginName?: string;
+  preload?: string;
+}): PluginSecurityMode {
+  return manifest.pluginName !== undefined || manifest.preload !== undefined
+    ? "legacy-trusted"
+    : "sandbox";
+}
 
 /**
  * plugin.json 校验 schema。

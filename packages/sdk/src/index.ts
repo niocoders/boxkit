@@ -1,3 +1,39 @@
+/** Stable host contract version. Runtime host release versions are exposed separately by `hostVersion()`. */
+export const HOST_API_VERSION = "1.0.0" as const;
+export type HostApiVersion = typeof HOST_API_VERSION;
+
+/** Version of the typed input envelope documented by the SDK. */
+export const INPUT_PAYLOAD_VERSION = 1 as const;
+export type InputPayloadVersion = typeof INPUT_PAYLOAD_VERSION;
+
+export const HOST_API_PERMISSIONS = [
+  "clipboard",
+  "db",
+  "notify",
+  "network",
+  "shell",
+  "screen",
+  "window",
+] as const;
+export type HostApiPermission = (typeof HOST_API_PERMISSIONS)[number];
+
+export type InputTextSource = "typed" | "paste" | "selection";
+
+/**
+ * Version 1 typed input shared by plugin fixtures and future host adapters.
+ * The current compatibility runtime still supplies `PluginEnterArgs.payload`
+ * as a string; `input` is optional until the typed-input transport is enabled.
+ */
+export type InputPayload =
+  | { type: "text"; text: string; source: InputTextSource }
+  | { type: "img"; mime: string; size: number; tempRef: string }
+  | { type: "files"; files: Array<{ path: string; name: string; kind: "file" | "directory" }> };
+
+export interface VersionedInputPayload {
+  version: InputPayloadVersion;
+  payload: InputPayload;
+}
+
 export interface LegacyCommandPayload {
   type?: "text" | "img" | "files";
   data?: unknown;
@@ -83,8 +119,10 @@ export interface PluginEnterArgs {
   /** 命中的 feature code */
   code: string;
   type: "text" | "regex" | "over";
-  /** 命中关键字时的原始输入 */
+  /** 命中关键字时的原始输入；兼容字段，始终保持字符串形状。 */
   payload: string;
+  /** 版本化 typed input；宿主尚未启用时不提供。 */
+  input?: VersionedInputPayload;
 }
 
 export interface PluginInfo {

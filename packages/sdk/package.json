@@ -18,14 +18,34 @@
     "plugin",
     "sdk"
   ],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "files": [
-    "src",
+    "dist",
     "README.md",
+    "CONTRACTS.md",
     "LICENSE"
   ],
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/esm/index.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "node src/build.mjs",
+    "test": "vitest run --root ../.. packages/sdk/src/contract.test.ts",
+    "prepack": "node src/build.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

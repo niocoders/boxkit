@@ -1,10 +1,11 @@
 import { BrowserWindow } from "electron";
 import path from "node:path";
 import { IPC } from "@boxkit/shared";
+import type { SettingsRoute } from "@boxkit/shared";
 
 let win: BrowserWindow | null = null;
 let pendingInstallPreview: unknown = null;
-let pendingShowTab: unknown = null;
+let pendingShowTab: SettingsRoute | null = null;
 let rendererReady = false;
 
 export function getSettingsWindow(): BrowserWindow | null {
@@ -34,7 +35,7 @@ export function queueInstallPreview(payload: unknown): void {
 }
 
 /** 将主面板的设置/市场跳转可靠地投递给设置页。 */
-export function queueSettingsShowTab(payload: unknown): void {
+export function queueSettingsShowTab(payload: SettingsRoute): void {
   pendingShowTab = payload;
   openSettingsWindow();
   flushPendingMessages();
@@ -45,7 +46,8 @@ export function markSettingsReady(): void {
   flushPendingMessages();
 }
 
-export function openSettingsWindow(): void {
+export function openSettingsWindow(initialTab?: string): void {
+  if (initialTab) pendingShowTab = { tab: initialTab };
   if (win && !win.isDestroyed()) {
     win.show();
     win.focus();

@@ -5,7 +5,7 @@ import { IPC } from "@boxkit/shared";
 import { ensureDirs } from "./core/paths.js";
 import { logger, markLogFileReady, flushBufferedLogs } from "./core/logger.js";
 import { settings } from "./core/config.js";
-import { initCrash } from "./services/crash.js";
+import { initCrash, markCleanShutdown, registerRendererRecovery } from "./services/crash.js";
 import { applyHotkey, unregisterAll } from "./services/hotkey.js";
 import { applyAutostart } from "./services/autostart.js";
 import { createTray, destroyTray } from "./services/tray.js";
@@ -28,7 +28,8 @@ import {
   toggleMainWindow,
 } from "./windows/mainWindow.js";
 import { openSettingsWindow, queueInstallPreview } from "./windows/settingsWindow.js";
-import { registerIpc, sendToMainWindow, toggleViaHotkey, toast } from "./ipc.js";
+import { destroyDetachedWindows } from "./windows/pluginDetachWindow.js";
+import { registerIpc, refreshConfiguredHotkeys, sendToMainWindow, sendToSettings, toggleViaHotkey, toast } from "./ipc.js";
 
 // 自定义协议需在 app ready 前注册特权
 protocol.registerSchemesAsPrivileged([
@@ -90,7 +91,9 @@ function bootstrap(): void {
   });
 
   app.on("before-quit", () => {
+    markCleanShutdown();
     setQuitting(true);
+    destroyDetachedWindows();
     unregisterAll();
     pluginManager.flushAllDb();
     usageFlush();
@@ -176,12 +179,10 @@ function handleMarketUrl(url?: string): void {
 function onReady(): void {
   ensureDirs();
   markLogFileReady();
-  initCrash();
-
   // 面板应用：隐藏 Dock 图标
   if (process.platform === "darwin" && app.dock) app.dock.hide();
-
   settings.load();
+  initCrash();
   clipboardHistoryProvider.load();
   settings.onChange(() => {
     applyAutostart();
@@ -197,27 +198,37 @@ function onReady(): void {
     toast,
     path.join(__dirname, "../preload/plugin.js"),
   );
+  registerRendererRecovery(getMainWindow()!, (name) => pluginHost.destroyView(name));
   setMainWindowResizeHandler(() => {
     const win = getMainWindow();
     if (win) pluginHost.layout(win);
   });
   pluginHost.onStateChange((s) => sendToMainWindow(IPC.pluginState, s));
   pluginManager.onChange(() => sendToMainWindow(IPC.pluginChanged, null));
-  appProvider.onChange(() => sendToMainWindow(IPC.searchDataChanged, null));
+  appProvider.onChange(() => {
+    sendToMainWindow(IPC.searchDataChanged, null);
+    sendToSettings(IPC.appsChanged, null);
+  });
   fileProvider.onChange(() => sendToMainWindow(IPC.searchDataChanged, null));
   clipboardHistoryProvider.onChange(() => sendToMainWindow(IPC.clipboardHistoryChanged, null));
+
+  // 插件与数据
+  cleanupStaging();
+  // 先加载插件，再注册依赖插件列表的扩展快捷键。
+  pluginManager.init();
+
+  // 主快捷键先注册，避免与插件/应用快捷键互相抢占同一个组合键。
+  if (!SMOKING) applyHotkey(toggleViaHotkey);
 
   registerIpc({
     pluginHost,
     onQuitRequest: () => app.quit(),
   });
 
-  // 插件与数据
-  cleanupStaging();
-  pluginManager.init();
-
   // 应用扫描（后台）
-  void appProvider.rescan();
+  void appProvider.rescan().then(() => {
+    refreshConfiguredHotkeys();
+  });
   void fileProvider.rescan();
 
   // 托盘 / 自启 / 快捷键 / 更新
@@ -235,7 +246,6 @@ function onReady(): void {
   if (SMOKING) {
     logger.info("boot", "冒烟测试模式：跳过全局快捷键与更新检查");
   } else {
-    applyHotkey(toggleViaHotkey);
     initUpdater();
   }
 

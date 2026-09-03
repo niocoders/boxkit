@@ -1,0 +1,37 @@
+/* 个人中心页面基础样式：浅色简洁风格 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background: #f5f7fb;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei",
+    sans-serif;
+  color: #333;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid #e5e8ef;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  color: #333;
+}
+.btn:hover {
+  background: #f5f7fb;
+}
+.btn.danger {
+  color: #c0392b;
+}

@@ -8,6 +8,8 @@
     "paths": {
       "@boxkit/shared": ["packages/shared/src/index.ts"],
       "@boxkit/shared/ipc": ["packages/shared/src/ipc.ts"],
+      "@boxkit/shared/manifest": ["packages/shared/src/manifest.ts"],
+      "@boxkit/shared/types": ["packages/shared/src/types.ts"],
       "@boxkit/sdk": ["packages/sdk/src/index.ts"]
     },
     "strict": true,

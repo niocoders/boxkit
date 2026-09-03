@@ -80,6 +80,25 @@ describe("searchQuery", () => {
     expect(rs.some((r) => r.kind === "file")).toBe(true);
     expect(rs.some((r) => r.kind === "clipboard")).toBe(true);
   });
+  it("typed img/files 输入只匹配声明类型并保留 payload", () => {
+    const typedDeps: EngineDeps = {
+      ...deps,
+      features: [
+        { pluginId: "p", displayName: "Media", feature: { code: "img", explain: "处理图片", cmds: [{ type: "img", label: "图片" }] } },
+        { pluginId: "p", displayName: "Files", feature: { code: "files", explain: "处理 Markdown", cmds: [{ type: "files", fileType: [".md"], label: "Markdown" }] } },
+        { pluginId: "p", displayName: "Text", feature: { code: "text", explain: "文本工具", cmds: ["文本"] } },
+      ],
+    };
+    const image = { type: "img" as const, mime: "image/png", size: 3, tempRef: "clipboard-image-test" };
+    const imageResults = searchQuery(image, typedDeps);
+    expect(imageResults.find((r) => r.featureCode === "img")?.payload).toEqual(image);
+    expect(imageResults.find((r) => r.featureCode === "text")).toBeUndefined();
+    const files = { type: "files" as const, files: [{ path: "/tmp/note.md", name: "note.md", kind: "file" as const }] };
+    const fileResults = searchQuery(files, typedDeps);
+    expect(fileResults.find((r) => r.featureCode === "files")?.payload).toEqual(files);
+    expect(fileResults.find((r) => r.featureCode === "img")).toBeUndefined();
+  });
+
   it("平台过滤和网络兜底", () => {
     expect(searchQuery("other", { ...deps, features: [{ pluginId: "p", displayName: "P", feature: { code: "x", explain: "其他", platform: ["platform-that-is-not-current"], cmds: ["other"] } }] }).find((r) => r.featureCode === "x")).toBeUndefined();
     expect(searchQuery("zzzznothing", { ...deps, apps: [], features: [], commands: [] }).some((r) => r.kind === "web")).toBe(true);

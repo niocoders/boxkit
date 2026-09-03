@@ -1,12 +1,30 @@
-import type { PluginModeState, SearchResult } from "@boxkit/shared";
+import type { InputPayload, PluginModeState, SearchResult } from "@boxkit/shared";
+
+export type AsyncStatus = "idle" | "loading" | "success" | "empty" | "error";
+
+export interface AsyncState<T> {
+  status: AsyncStatus;
+  data?: T;
+  error?: string;
+}
+
+export interface SearchExecutionResult {
+  ok: boolean;
+  message?: string;
+  code?: string;
+}
 
 export interface BoxkitBridge {
-  query(text: string): Promise<SearchResult[]>;
-  execute(result: SearchResult): Promise<{ ok: boolean; message?: string }>;
+  query(text: string | InputPayload): Promise<SearchResult[]>;
+  execute(result: SearchResult): Promise<SearchExecutionResult>;
   hide(): void;
   openSettings(): void;
+  openPluginSettings(pluginId: string): void;
+  openProfile(): void;
   sendInput(text: string): void;
   onInputCommand?(cb: (command: string, value?: unknown) => void): () => void;
+  /** Electron 44 removed File.path; preload owns the filesystem lookup. */
+  getPathForFile?(file: File): string;
   exitPlugin(): void;
   onPluginState(cb: (s: PluginModeState) => void): () => void;
   onPluginChanged(cb: () => void): () => void;

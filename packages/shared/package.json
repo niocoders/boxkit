@@ -18,7 +18,9 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./ipc": "./src/ipc.ts"
+    "./ipc": "./src/ipc.ts",
+    "./manifest": "./src/manifest.ts",
+    "./types": "./src/types.ts"
   },
   "dependencies": {
     "zod": "^4.5.2"

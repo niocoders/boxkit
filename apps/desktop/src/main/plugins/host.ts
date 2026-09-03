@@ -15,13 +15,20 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   IPC,
+  DETACH_TOOLBAR_HEIGHT,
+  type DetachHostState,
+  type InputPayload,
+  type InputPayloadVersion,
+  type PluginCommandType,
   type PluginModeState,
   type PluginPermission,
 } from "@boxkit/shared";
+import { getPluginSecurityMode } from "@boxkit/shared/manifest";
 import { logger } from "../core/logger.js";
 import type { LoadedPlugin } from "./manager.js";
 import type { PluginManager } from "./manager.js";
 import { getMainWindow, showMainWindow } from "../windows/mainWindow.js";
+import { getDetachedWindow, reattachPluginWindow, updateDetachedSubInput } from "../windows/pluginDetachWindow.js";
 import { getMachineId } from "../services/machine-id.js";
 
 const HEADER_HEIGHT = 64;
@@ -62,8 +69,9 @@ const MIME: Record<string, string> = {
 
 interface EnterPayload {
   code: string;
-  type: "text" | "regex" | "over";
-  payload: string;
+  type: PluginCommandType;
+  payload: string | InputPayload;
+  input?: { version: InputPayloadVersion; payload: InputPayload };
 }
 
 /**
@@ -75,14 +83,18 @@ interface EnterPayload {
 export class PluginHost {
   private views = new Map<string, WebContentsView>();
   private protocolsReady = new Set<string>();
+  /** 当前主搜索窗中打开的插件名；独立窗口插件不占用此状态。 */
   private currentName: string | null = null;
+  private detachedNames = new Set<string>();
   private subinput: { placeholder: string } | null = null;
+  private currentInput: InputPayload | null = null;
   private pendingEnter = new Map<string, EnterPayload>();
   private prePluginSize: { width: number; height: number } | null = null;
   private pendingScreenShot: Buffer | null = null;
   private pendingScreenShotOwner: string | null = null;
   private screenCaptureOwners = new Map<number, string>();
   private childOwners = new Map<number, string>();
+  private childWindows = new Map<number, BrowserWindow>();
   private stateListeners = new Set<(s: PluginModeState) => void>();
 
   constructor(
@@ -154,6 +166,7 @@ export class PluginHost {
     win.contentView.addChildView(view);
     this.currentName = plugin.manifest.name;
     this.subinput = null;
+    this.currentInput = enter.input?.payload ?? null;
     this.layoutView(view, win);
     this.pushState();
 
@@ -165,16 +178,30 @@ export class PluginHost {
     logger.info("plugins", `打开插件 ${plugin.manifest.name} [${enter.code}]`);
   }
 
-  outPlugin(): void {
-    if (!this.currentName) return;
+  outPlugin(name = this.currentName): void {
+    if (!name) return;
+    if (this.detachedNames.has(name)) {
+      reattachPluginWindow(this, name);
+      logger.info("plugins", `退出独立插件 ${name}`);
+      return;
+    }
+    if (this.currentName !== name) return;
     const win = getMainWindow();
-    const name = this.currentName;
-    const view = this.views.get(name);
     this.detachCurrent(true, false);
     logger.info("plugins", `退出插件 ${name}`);
     if (win) {
       win.webContents.focus();
     }
+  }
+
+  private pluginView(name: string): WebContentsView | null {
+    const view = this.views.get(name);
+    return view && !view.webContents.isDestroyed() ? view : null;
+  }
+
+  private detachedWindow(name: string): BrowserWindow | null {
+    const win = getDetachedWindow(name);
+    return win && !win.isDestroyed() ? win : null;
   }
 
   private detachCurrent(notifySearch: boolean, processExit = true): void {
@@ -194,6 +221,7 @@ export class PluginHost {
     }
     this.currentName = null;
     this.subinput = null;
+    this.currentInput = null;
     if (notifySearch) this.pushState();
   }
 
@@ -213,27 +241,39 @@ export class PluginHost {
     });
   }
 
-  /** bk.setViewHeightRatio：调整视图高度占比（0.2 ~ 1） */
-  setViewHeightRatio(ratio: number): void {
-    const win = getMainWindow();
-    const view = this.currentName ? this.views.get(this.currentName) : null;
+  /** bk.setViewHeightRatio：调整插件视图高度占比（0.2 ~ 1）。 */
+  setViewHeightRatio(ratio: number, name = this.currentName): void {
+    if (!name) return;
+    const view = this.pluginView(name);
+    const isDetached = this.detachedNames.has(name);
+    const win = isDetached ? this.detachedWindow(name) : getMainWindow();
     if (!win || !view) return;
     const [w, h] = win.getContentSize();
     const clamped = Math.min(1, Math.max(0.2, ratio));
+    const top = isDetached ? DETACH_TOOLBAR_HEIGHT : HEADER_HEIGHT;
     view.setBounds({
       x: 0,
-      y: HEADER_HEIGHT,
+      y: top,
       width: w,
-      height: Math.max(80, Math.round((h - HEADER_HEIGHT) * clamped)),
+      height: Math.max(80, Math.round((h - top) * clamped)),
     });
   }
 
   forwardSubInput(text: string): void {
-    const view = this.currentName ? this.views.get(this.currentName) : null;
+    const view = this.currentName ? this.pluginView(this.currentName) : null;
     view?.webContents.send(IPC.pkSubInputChange, { text });
   }
 
-  setSubInput(placeholder: string, isFocus: boolean): void {
+  forwardDetachedSubInput(name: string, text: string): void {
+    const view = this.pluginView(name);
+    view?.webContents.send(IPC.pkSubInputChange, { text });
+  }
+
+  setSubInput(placeholder: string, isFocus: boolean, name = this.currentName): void {
+    if (name && this.detachedNames.has(name)) {
+      updateDetachedSubInput(name, { placeholder });
+      return;
+    }
     this.subinput = placeholder ? { placeholder } : null;
     this.pushState();
     if (isFocus) {
@@ -254,27 +294,34 @@ export class PluginHost {
     const ses = session.fromPartition(partition);
     this.registerPluginProtocol(ses, plugin);
 
-    const view = new WebContentsView({
-      webPreferences: {
-        // 兼容视图：插件页面/预载具备 Node 能力、与 preload 同上下文
-        preload: this.preloadPath,
-        nodeIntegration: true,
-        contextIsolation: false,
-        sandbox: false,
-        partition,
-        spellcheck: false,
-        // 链式加载插件自带 preload（绝对路径经 argv 传入，见 preload/plugin.ts）
-        additionalArguments: [
-          `--boxkit-plugin-preload=${plugin.manifest.preload ? path.join(plugin.dir, plugin.manifest.preload) : ""}`,
-        ],
-      },
-    });
+    const mode = getPluginSecurityMode(plugin.manifest);
+    const isLegacyTrusted = mode === "legacy-trusted";
+    const webPreferences: Electron.WebPreferences = {
+      preload: this.preloadPath,
+      nodeIntegration: isLegacyTrusted,
+      contextIsolation: !isLegacyTrusted,
+      sandbox: !isLegacyTrusted,
+      partition,
+      spellcheck: false,
+      additionalArguments: [
+        `--boxkit-plugin-security=${mode}`,
+        `--boxkit-plugin-permissions=${plugin.manifest.permissions.join(",")}`,
+        `--boxkit-plugin-preload=${isLegacyTrusted && plugin.manifest.preload ? path.join(plugin.dir, plugin.manifest.preload) : ""}`,
+      ],
+    };
+    const view = new WebContentsView({ webPreferences });
     view.setBackgroundColor("#00000000");
 
     const wc = view.webContents;
     wc.setWindowOpenHandler(({ url }) => {
       logger.warn("plugins", `插件尝试 window.open，已拦截: ${url}`);
       return { action: "deny" };
+    });
+    wc.on("will-navigate", (event, url) => {
+      if (!url.startsWith(`bk-plugin://${name}/`)) {
+        event.preventDefault();
+        logger.warn("plugins", `插件导航已拦截: ${url}`);
+      }
     });
     wc.on("did-finish-load", () => {
       const pending = this.pendingEnter.get(name);
@@ -290,7 +337,7 @@ export class PluginHost {
     });
     // Esc 退出插件
     wc.on("before-input-event", (event, input) => {
-      if (input.type === "keyDown" && input.key === "Escape") {
+      if (input.type === "keyDown" && input.key === "Escape" && !input.control && !input.meta) {
         event.preventDefault();
         this.outPlugin();
       }
@@ -335,22 +382,115 @@ export class PluginHost {
   destroyView(name: string): void {
     const view = this.views.get(name);
     const wasCurrent = this.currentName === name;
-    if (wasCurrent) this.detachCurrent(true, true);
+    if (wasCurrent) {
+      this.detachCurrent(true, true);
+      try { view?.webContents.close(); } catch { /* ignore */ }
+    }
     if (view && !wasCurrent) {
       try {
         view.webContents.send(IPC.pkOutEvent, true);
         view.webContents.send(IPC.pkDetach);
         view.webContents.stop();
-      } catch {
-        /* ignore */
+      } finally {
+        try { view.webContents.close(); } catch { /* ignore */ }
       }
-      this.childOwners.forEach((owner, webContentsId) => {
-        if (owner === name) this.childOwners.delete(webContentsId);
-      });
     }
+    this.childWindows.forEach((child, id) => {
+        if (this.childOwners.get(child.webContents.id) === name) {
+          this.childOwners.delete(child.webContents.id);
+          this.childWindows.delete(id);
+          if (!child.isDestroyed()) child.destroy();
+        }
+      });
     this.views.delete(name);
+    try { session.fromPartition(`persist:pk-${name}`).protocol.unhandle("bk-plugin"); } catch { /* ignore */ }
     this.protocolsReady.delete(name);
     this.pendingEnter.delete(name);
+  }
+
+  /** 脱离为独立窗口前：把视图从主窗摘下并清理主窗的插件模式状态。 */
+  detachForDetachWindow(name: string): { ok: boolean; restoreSize: { width: number; height: number } | null } {
+    const win = getMainWindow();
+    const view = this.views.get(name);
+    if (!view || view.webContents.isDestroyed() || this.currentName !== name || !win) {
+      return { ok: false, restoreSize: null };
+    }
+    const restoreSize = this.prePluginSize ? { ...this.prePluginSize } : null;
+    try {
+      view.webContents.send(IPC.pkOutEvent, false);
+    } catch {
+      /* ignore */
+    }
+    win.contentView.removeChildView(view);
+    if (restoreSize) {
+      win.setSize(restoreSize.width, restoreSize.height);
+      this.prePluginSize = null;
+    }
+    this.currentName = null;
+    this.subinput = null;
+    this.currentInput = null;
+    this.pushState();
+    return { ok: true, restoreSize };
+  }
+
+  /** 把已有插件视图挂到独立窗口。 */
+  attachToDetachedWindow(name: string, hostWindow: BrowserWindow): void {
+    const view = this.views.get(name);
+    if (!view || view.webContents.isDestroyed() || hostWindow.isDestroyed()) return;
+    if (hostWindow.contentView.children.includes(view)) return;
+    this.detachedNames.add(name);
+    hostWindow.contentView.addChildView(view);
+    const [w, h] = hostWindow.getContentSize();
+    view.setBounds({ x: 0, y: DETACH_TOOLBAR_HEIGHT, width: w, height: Math.max(80, h - DETACH_TOOLBAR_HEIGHT) });
+  }
+
+  /** 独立窗口 resize 时同步插件视图边界。 */
+  layoutDetachedWindow(name: string, hostWindow: BrowserWindow): void {
+    const view = this.views.get(name);
+    if (!view || view.webContents.isDestroyed() || hostWindow.isDestroyed()) return;
+    const [w, h] = hostWindow.getContentSize();
+    view.setBounds({ x: 0, y: DETACH_TOOLBAR_HEIGHT, width: w, height: Math.max(80, h - DETACH_TOOLBAR_HEIGHT) });
+  }
+
+  detachedHostState(name: string): DetachHostState {
+    const plugin = this.manager.get(name);
+    return {
+      pluginName: name,
+      displayName: plugin?.manifest.displayName ?? name,
+      subinput: this.subinput ? { ...this.subinput, value: "" } : null,
+      alwaysOnTop: false,
+      zoomFactor: 1,
+    };
+  }
+
+  setDetachedWindow(_name: string, _window: BrowserWindow): void {
+    // The detached-window module owns the BrowserWindow registry. This method
+    // is kept as a narrow host hook for lifecycle coordination.
+  }
+
+  /** 从独立窗口取回视图，等待归还主窗。 */
+  reattachFromDetachedWindow(name: string): void {
+    const view = this.views.get(name);
+    try {
+      view?.webContents.send(IPC.pkOutEvent, true);
+      view?.webContents.send(IPC.pkDetach);
+      view?.webContents.stop();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** 独立窗口关闭时：确保视图从窗口摘除，之后可由主窗重新打开。 */
+  releaseDetachedWindow(name: string, hostWindow: BrowserWindow): void {
+    const view = this.views.get(name);
+    if (!view) return;
+    try {
+      hostWindow.contentView.removeChildView(view);
+    } catch {
+      /* ignore */
+    }
+    if (this.currentName === name) this.currentName = null;
+    this.detachedNames.delete(name);
   }
 
   destroyAll(): void {
@@ -371,9 +511,8 @@ export class PluginHost {
 
   private requirePermission(p: LoadedPlugin | null, perm: PluginPermission): LoadedPlugin {
     if (!p) throw new Error("不在有效的插件环境中");
-    // 没有宿主权限字段的 legacy 清单按安装信任模型放行。
-    const legacyManifest = p.manifest.pluginName !== undefined && p.manifest.permissions.length === 0;
-    if (!legacyManifest && !p.manifest.permissions.includes(perm)) {
+    // 权限由每个 IPC handler 再次校验；这里仅返回插件自己的声明。
+    if (!p.manifest.permissions.includes(perm)) {
       throw new Error(`插件未声明权限: ${perm}`);
     }
     return p;
@@ -387,22 +526,24 @@ export class PluginHost {
         name: p.manifest.name,
         displayName: p.manifest.displayName,
         version: p.manifest.version,
+        securityMode: getPluginSecurityMode(p.manifest),
         permissions: [...p.manifest.permissions],
         path: p.dir,
       };
     });
 
     ipcMain.on(IPC.pkOut, (e) => {
-      if (this.senderPlugin(e)) this.outPlugin();
+      const owner = this.senderPlugin(e);
+      if (owner) this.outPlugin(owner.manifest.name);
     });
 
     ipcMain.on(IPC.pkSubInputSet, (e, args: { placeholder?: string; isFocus?: boolean }) => {
-      this.requirePermission(this.senderPlugin(e), "window");
-      this.setSubInput(args?.placeholder ?? "", !!args?.isFocus);
+      const owner = this.requirePermission(this.senderPlugin(e), "window");
+      this.setSubInput(args?.placeholder ?? "", !!args?.isFocus, owner.manifest.name);
     });
     ipcMain.on(IPC.pkSubInputRemove, (e) => {
-      this.requirePermission(this.senderPlugin(e), "window");
-      this.setSubInput("", false);
+      const owner = this.requirePermission(this.senderPlugin(e), "window");
+      this.setSubInput("", false, owner.manifest.name);
     });
     ipcMain.on(IPC.pkSubInputValue, (e, value: unknown) => {
       this.requirePermission(this.senderPlugin(e), "window");
@@ -508,13 +649,18 @@ export class PluginHost {
       showMainWindow();
     });
     ipcMain.on(IPC.pkResize, (e, ratio: unknown) => {
-      this.requirePermission(this.senderPlugin(e), "window");
-      this.setViewHeightRatio(Number(ratio));
+      const owner = this.requirePermission(this.senderPlugin(e), "window");
+      this.setViewHeightRatio(Number(ratio), owner.manifest.name);
     });
     ipcMain.on(IPC.pkResizeHeight, (e, height: unknown) => {
       this.requirePermission(this.senderPlugin(e), "window");
       const win = getMainWindow();
-      if (win) win.setSize(win.getSize()[0], Math.max(80, Math.min(1600, Math.round(Number(height) || 0))));
+      if (win) {
+        const [width] = win.getContentSize();
+        const nextHeight = Math.max(80, Math.min(1600, Math.round(Number(height) || 0)));
+        win.setContentSize(width, nextHeight);
+        win.setSize(win.getSize()[0], Math.max(nextHeight + HEADER_HEIGHT, win.getSize()[1]));
+      }
     });
     ipcMain.handle(IPC.pkDisplaySize, (e) => {
       this.requirePermission(this.senderPlugin(e), "screen");
@@ -690,7 +836,6 @@ export class PluginHost {
     });
 
     // 创建归属当前插件的子窗口
-    const childWindows = new Map<number, BrowserWindow>();
 
     const createChildWindow = (
       e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
@@ -725,10 +870,10 @@ export class PluginHost {
           ],
         },
       });
-      childWindows.set(win.id, win);
+      this.childWindows.set(win.id, win);
       this.childOwners.set(win.webContents.id, p.manifest.name);
       win.on("closed", () => {
-        childWindows.delete(win.id);
+        this.childWindows.delete(win.id);
         this.childOwners.delete(win.webContents.id);
       });
       void win.loadURL(url);
@@ -753,7 +898,7 @@ export class PluginHost {
     // 向子窗口 webContents 转发消息（createBrowserWindow 回调句柄的 send 即此通道）
     ipcMain.on(IPC.pkBwSend, (e, id: number, channel: string, data: unknown) => {
       const owner = this.senderPlugin(e);
-      const w = childWindows.get(Number(id));
+      const w = this.childWindows.get(Number(id));
       if (!owner || !w || this.childOwners.get(w.webContents.id) !== owner.manifest.name) return;
       w.webContents.send(String(channel), data);
     });

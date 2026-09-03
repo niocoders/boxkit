@@ -11,6 +11,8 @@ const repoRoot = path.resolve(appRoot, "../..");
 const esbAlias = {
   "@boxkit/shared": path.join(repoRoot, "packages/shared/src/index.ts"),
   "@boxkit/shared/ipc": path.join(repoRoot, "packages/shared/src/ipc.ts"),
+  "@boxkit/shared/manifest": path.join(repoRoot, "packages/shared/src/manifest.ts"),
+  "@boxkit/shared/types": path.join(repoRoot, "packages/shared/src/types.ts"),
   "@boxkit/sdk": path.join(repoRoot, "packages/sdk/src/index.ts"),
 };
 
@@ -35,7 +37,7 @@ await build({
 });
 
 /** 沙箱 preload：单文件、只依赖 electron 受限子集 */
-for (const name of ["main", "plugin"]) {
+for (const name of ["main", "plugin", "detach"]) {
   await build({
     ...esbCommon,
     entryPoints: [path.join(appRoot, `src/preload/${name}.ts`)],
@@ -51,6 +53,9 @@ await viteBuild({
   resolve: {
     alias: {
       "@boxkit/shared": path.join(repoRoot, "packages/shared/src/index.ts"),
+      "@boxkit/shared/ipc": path.join(repoRoot, "packages/shared/src/ipc.ts"),
+      "@boxkit/shared/manifest": path.join(repoRoot, "packages/shared/src/manifest.ts"),
+      "@boxkit/shared/types": path.join(repoRoot, "packages/shared/src/types.ts"),
       "@boxkit/sdk": path.join(repoRoot, "packages/sdk/src/index.ts"),
     },
   },
@@ -61,6 +66,7 @@ await viteBuild({
       input: {
         search: path.join(appRoot, "src/renderer/search/index.html"),
         settings: path.join(appRoot, "src/renderer/settings/index.html"),
+        detach: path.join(appRoot, "src/renderer/detach/index.html"),
       },
     },
   },

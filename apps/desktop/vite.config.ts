@@ -23,6 +23,7 @@ export default defineConfig({
       input: {
         search: path.join(appRoot, "src/renderer/search/index.html"),
         settings: path.join(appRoot, "src/renderer/settings/index.html"),
+        detach: path.join(appRoot, "src/renderer/detach/index.html"),
       },
     },
   },

@@ -239,7 +239,7 @@ async function main() {
   await waitForCapability(plugin, "run-status");
 
   const enter = await result(plugin, "enter-payload");
-  if (enter.status !== "pass" || !enter.text?.includes('"code":"compat"') || !enter.text?.includes('"type":"over"') || !enter.text?.includes('"payload":""')) {
+  if (enter.status !== "pass" || !enter.text?.includes('"code":"compat"') || !enter.text?.includes('"type":"over"') || !enter.text?.includes('"payload":"compat-fixture"')) {
     fail(`Unexpected onPluginEnter result: ${JSON.stringify(enter)}`);
   }
   mark("onPluginEnter payload", "passed", enter.text);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IPC, type PluginModeState, type SearchResult } from "@boxkit/shared";
-import { boxkit } from "./bridge.js";
+import { IPC, type InputPayload, type PluginModeState, type SearchResult } from "@boxkit/shared";
+import { boxkit, type AsyncStatus, type SearchExecutionResult } from "./bridge.js";
 
 type Mode = "search" | "plugin";
 
@@ -69,37 +69,114 @@ const KIND_BADGE: Record<string, { label: string; dim?: boolean }> = {
 
 const GRID_COLUMNS = 9;
 
+type ContextMenuState = {
+  result: SearchResult;
+  x: number;
+  y: number;
+};
+
+type ExecutionRetry = {
+  result: SearchResult;
+  hideOnSuccess: boolean;
+};
+
+function errorText(error: unknown, fallback: string): string {
+  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const normalized = raw.toLowerCase();
+  if (/enoent|not found|不存在|已过期|无效|invalid/.test(normalized)) return "目标已失效，请重试或更新索引";
+  if (/eacces|permission|denied|拒绝|权限/.test(normalized)) return "操作被拒绝，请检查权限";
+  if (/timeout|timed out|network|fetch|econn|网络/.test(normalized)) return "服务暂时不可用，请重试";
+  return fallback;
+}
+
+function executionError(response: SearchExecutionResult | null, thrown: unknown): string {
+  if (response?.code === "FORBIDDEN") return "操作被拒绝，请检查权限";
+  return errorText(thrown ?? response?.message, response?.message ? "操作失败，请重试" : "操作失败，请重试");
+}
+
+async function copyText(value: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Use the selection fallback below when clipboard permissions are unavailable.
+  }
+  const area = document.createElement("textarea");
+  area.value = value;
+  area.setAttribute("readonly", "true");
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  area.remove();
+  return copied;
+}
+
 export function App() {
   const [mode, setMode] = useState<Mode>("search");
   const [pluginState, setPluginState] = useState<PluginModeState>({ mode: "search" });
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [queryStatus, setQueryStatus] = useState<AsyncStatus>("idle");
+  const [queryError, setQueryError] = useState<string | null>(null);
+  const [inputPayload, setInputPayload] = useState<InputPayload | null>(null);
   const [selected, setSelected] = useState(0);
   const [expanded, setExpanded] = useState<Expanded | null>(null);
   const [recentExpanded, setRecentExpanded] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [clipboardCaptureError, setClipboardCaptureError] = useState<string | null>(null);
+  const [executionStatus, setExecutionStatus] = useState<AsyncStatus>("idle");
+  const [executionErrorMessage, setExecutionErrorMessage] = useState<string | null>(null);
+  const [executionRetry, setExecutionRetry] = useState<ExecutionRetry | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const seqRef = useRef(0);
+  const inputPayloadRef = useRef<InputPayload | null>(null);
+  const queryRef = useRef("");
+  const setPayload = useCallback((payload: InputPayload | null) => {
+    inputPayloadRef.current = payload;
+    setInputPayload(payload);
+  }, []);
 
-  const runQuery = useCallback(async (text: string) => {
+  const runQuery = useCallback(async (text: string, payload: InputPayload | null = inputPayloadRef.current) => {
     const seq = ++seqRef.current;
+    setQueryStatus("loading");
+    setQueryError(null);
     try {
-      const rs = await boxkit.query(text);
+      const rs = await boxkit.query(payload ?? text);
       if (seq !== seqRef.current) return; // 过期响应丢弃
       setResults(rs);
+      setQueryStatus(rs.length ? "success" : "empty");
       setSelected(0);
       setExpanded(null);
-    } catch {
+    } catch (error) {
+      if (seq !== seqRef.current) return;
       setResults([]);
+      setQueryStatus("error");
+      setQueryError(errorText(error, "搜索失败，请重试"));
     }
   }, []);
 
   useEffect(() => {
     void boxkit.favorites?.get().then((state) => setPinnedIds(new Set(state.ids)));
   }, []);
+
+  const onInputChange = useCallback((value: string) => {
+    queryRef.current = value;
+    setPayload(null);
+    setQuery(value);
+  }, [setPayload]);
 
   const togglePinned = useCallback(async (id: string) => {
     const next = pinnedIds.has(id)
@@ -148,7 +225,7 @@ export function App() {
     void runQuery("");
     const onFocus = () => {
       inputRef.current?.focus();
-      void runQuery(query);
+      void runQuery(queryRef.current);
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
@@ -161,24 +238,58 @@ export function App() {
   }, [runQuery, query]);
 
   useEffect(() => {
-    const onPaste = (event: ClipboardEvent) => {
+    const onPaste = async (event: ClipboardEvent) => {
       const data = event.clipboardData;
       if (!data) return;
-      const paths = Array.from(data.files ?? []).map((file) => (file as File & { path?: string }).path).filter(Boolean) as string[];
+      const paths = Array.from(data.files ?? [])
+        .map((file) => boxkit.getPathForFile?.(file) ?? "")
+        .filter(Boolean);
+      const imageItem = Array.from(data.items ?? []).find(
+        (item) => item.kind === "file" && item.type.toLowerCase().startsWith("image/"),
+      );
+      const imageFile = imageItem?.getAsFile();
       const text = data.getData("text/plain");
-      if (!paths.length && !text) return;
+      if (paths.length) {
+        const payload: InputPayload = { type: "files", files: paths.map((filePath) => ({ path: filePath, name: filePath.split(/[\\/]/).pop() ?? filePath, kind: "file" })) };
+        setPayload(payload);
+        void runQuery("", payload);
+        event.preventDefault();
+        return;
+      }
+      if (imageFile) {
+        const maxBytes = 4 * 1024 * 1024;
+        if (imageFile.size > maxBytes) {
+          setClipboardCaptureError("图片过大，无法处理");
+          return;
+        }
+        const buffer = await imageFile.arrayBuffer();
+        const payload: InputPayload = {
+          type: "img",
+          mime: imageFile.type || "image/png",
+          size: buffer.byteLength,
+          tempRef: `clipboard-image-${Date.now().toString(36)}`,
+          data: new Uint8Array(buffer),
+        };
+        event.preventDefault();
+        setClipboardCaptureError(null);
+        setPayload(payload);
+        void runQuery("", payload);
+        return;
+      }
+      if (!text) return;
       event.preventDefault();
-      setClipboardCaptureError(null);
-      void boxkit.clipboardHistory?.capture({ text: text || undefined, paths: paths.length ? paths : undefined })
-        .then(() => void runQuery(query))
-        .catch(() => setClipboardCaptureError("无法读取粘贴内容"));
-      if (text) setQuery(text.slice(0, 1000));
+      setPayload({ type: "text", text, source: "paste" });
+      setQuery(text.slice(0, 1000));
     };
     const onDrop = (event: DragEvent) => {
-      const paths = Array.from(event.dataTransfer?.files ?? []).map((file) => (file as File & { path?: string }).path).filter(Boolean) as string[];
+      const paths = Array.from(event.dataTransfer?.files ?? [])
+        .map((file) => boxkit.getPathForFile?.(file) ?? "")
+        .filter(Boolean);
       if (!paths.length) return;
       event.preventDefault();
-      void boxkit.clipboardHistory?.capture({ paths }).then(() => void runQuery(query));
+      const payload: InputPayload = { type: "files", files: paths.map((filePath) => ({ path: filePath, name: filePath.split(/[\\/]/).pop() ?? filePath, kind: "file" })) };
+      setPayload(payload);
+      void runQuery("", payload);
     };
     const onDragOver = (event: DragEvent) => event.preventDefault();
     window.addEventListener("paste", onPaste);
@@ -194,7 +305,7 @@ export function App() {
   // 输入防抖查询
   useEffect(() => {
     const t = setTimeout(() => {
-      if (mode === "search") void runQuery(query);
+      if (mode === "search") void runQuery(query, inputPayloadRef.current);
       else boxkit.sendInput(query);
     }, 40);
     return () => clearTimeout(t);
@@ -209,7 +320,7 @@ export function App() {
     });
   }, []);
 
-  const isGrid = mode === "search" && !query && !expanded && results.length > 0;
+  const isGrid = mode === "search" && queryStatus === "success" && !query && !expanded && results.length > 0;
 
   // 空态网格分组（最近使用 / 已固定 / 全部功能 / 市场精选）
   const gridGroups = useMemo<GridGroup[]>(() => {
@@ -240,30 +351,110 @@ export function App() {
   // 网格扁平导航序
   const flatGrid = useMemo(() => gridGroups.flatMap((g) => g.items), [gridGroups]);
 
-  const executeGridItem = useCallback(
-    (r: SearchResult) => {
-      if (r.id === "open:market") {
-        void boxkit.execute(r);
-        setTimeout(() => boxkit.hide(), 150);
-        return;
+  const executeResult = useCallback(
+    async (result: SearchResult, hideOnSuccess: boolean) => {
+      if (executionStatus === "loading") return false;
+      setExecutionStatus("loading");
+      setExecutionErrorMessage(null);
+      setExecutionRetry({ result, hideOnSuccess });
+      try {
+        const response = await boxkit.execute(result);
+        if (response?.ok) {
+          setExecutionStatus("success");
+          setExecutionRetry(null);
+          if (hideOnSuccess) setTimeout(() => boxkit.hide(), 150);
+          return true;
+        }
+        setExecutionStatus("error");
+        setExecutionErrorMessage(executionError(response ?? null, null));
+        inputRef.current?.focus();
+        return false;
+      } catch (error) {
+        setExecutionStatus("error");
+        setExecutionErrorMessage(executionError(null, error));
+        inputRef.current?.focus();
+        return false;
       }
-      void boxkit.execute(r);
-      if (r.kind !== "plugin") setTimeout(() => boxkit.hide(), 150);
     },
-    [],
+    [executionStatus],
+  );
+
+  const executeGridItem = useCallback(
+    (r: SearchResult) => void executeResult(r, r.kind !== "plugin"),
+    [executeResult],
   );
 
   const executeAt = useCallback(
     (idx: number) => {
       const r = results[idx];
       if (!r) return;
-      void boxkit.execute(r);
-      if (mode === "search" && r.kind !== "plugin") {
-        setTimeout(() => boxkit.hide(), 150);
-      }
+      const currentQuery = queryRef.current.trim();
+      const isExactPluginCommand = r.kind === "plugin"
+        && (r.pluginCmds ?? []).some((cmd) => cmd.trim().toLowerCase() === currentQuery.toLowerCase());
+      const executable = r.kind === "plugin"
+        ? {
+            ...r,
+            queryText: r.queryText || currentQuery,
+            payload: r.payload || currentQuery,
+            cmdType: isExactPluginCommand ? "over" : (r.cmdType ?? "text"),
+          }
+        : r;
+      void executeResult(executable, mode === "search" && executable.kind !== "plugin");
     },
-    [results, mode],
+    [executeResult, mode, results],
   );
+
+  const retryQuery = useCallback(() => {
+    void runQuery(query);
+  }, [query, runQuery]);
+
+  const retryExecution = useCallback(() => {
+    if (executionRetry) void executeResult(executionRetry.result, executionRetry.hideOnSuccess);
+  }, [executeResult, executionRetry]);
+
+  const copyResultValue = useCallback(async (value: string, label = "内容") => {
+    const copied = await copyText(value);
+    setToast(copied ? `${label}已复制` : `无法复制${label}`);
+    setTimeout(() => setToast(null), 2600);
+  }, []);
+
+  const openContextMenu = useCallback((result: SearchResult, x?: number, y?: number) => {
+    setContextMenu({ result, x: x ?? Math.round(window.innerWidth / 2), y: y ?? 80 });
+    setSelected((current) => {
+      const index = (isGrid ? flatGrid : results).findIndex((item) => item.id === result.id);
+      return index >= 0 ? index : current;
+    });
+  }, [flatGrid, isGrid, results]);
+
+  const contextValue = contextMenu?.result.filePath
+    ?? (contextMenu?.result.kind === "file" || contextMenu?.result.kind === "app" ? contextMenu.result.subtitle : undefined);
+  const activeResult = isGrid
+    ? flatGrid[selected]
+    : expanded
+      ? (expanded.cmds[selected] === undefined ? undefined : { ...expanded.base, payload: expanded.cmds[selected], cmdType: "over" as const })
+      : results[selected];
+  const activeResultId = activeResult
+    ? (expanded ? `search-option-command-${selected}` : isGrid ? `search-gridcell-${selected}` : `search-option-${selected}`)
+    : undefined;
+  const listId = isGrid ? "search-grid" : "search-results";
+  const showQueryError = mode === "search" && queryStatus === "error";
+  const showQueryLoading = mode === "search" && queryStatus === "loading";
+  const showQueryEmpty = mode === "search" && queryStatus === "empty";
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const first = contextMenuRef.current?.querySelector<HTMLButtonElement>("button");
+    first?.focus();
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = (event: MouseEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [contextMenu]);
 
   const listCount = expanded ? expanded.cmds.length : results.length;
 
@@ -276,20 +467,35 @@ export function App() {
     if (expanded) {
       const cmd = expanded.cmds[selected];
       if (cmd === undefined) return;
-      void boxkit.execute({ ...expanded.base, payload: cmd, cmdType: "over" });
-      setTimeout(() => boxkit.hide(), 150);
+      void executeResult({ ...expanded.base, payload: cmd, cmdType: "over" }, true);
       return;
     }
     executeAt(selected);
-  }, [isGrid, flatGrid, selected, executeGridItem, expanded, executeAt]);
+  }, [isGrid, flatGrid, selected, executeGridItem, expanded, executeAt, executeResult]);
+
+  // 脱离插件为独立窗口（detachPlugin 声明由 bridge 后续补充，此处局部断言避免类型冲突）
+  const detachCurrentPlugin = useCallback((name: string) => {
+    void (boxkit as unknown as {
+      detachPlugin: (n: string) => Promise<{ ok: boolean; error?: string }>;
+    }).detachPlugin(name);
+  }, []);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
-      if (mode === "plugin") {
+      if (contextMenu) {
+        setContextMenu(null);
+        inputRef.current?.focus();
+      } else if (mode === "plugin") {
         boxkit.exitPlugin();
       } else if (expanded) {
         setExpanded(null); // 先收起副命令
+        setSelected(0);
+        inputRef.current?.focus();
+      } else if (query) {
+        setQuery("");
+        setPayload(null);
+        inputRef.current?.focus();
       } else {
         boxkit.hide();
       }
@@ -301,7 +507,20 @@ export function App() {
       if (current) void togglePinned(current.id);
       return;
     }
-    if (mode === "plugin") return; // 输入转发给插件，不拦截
+    if (mode === "search" && (e.key === "F10" && e.shiftKey || e.key === "ContextMenu")) {
+      e.preventDefault();
+      if (activeResult) openContextMenu(activeResult);
+      return;
+    }
+    if (mode === "plugin") {
+      if (e.key.toLowerCase() === "d" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        const name = pluginState.plugin?.name;
+        if (name) detachCurrentPlugin(name);
+        return;
+      }
+      return; // 输入转发给插件，不拦截
+    }
     if (isGrid) {
       const n = flatGrid.length;
       if (!n) return;
@@ -320,15 +539,12 @@ export function App() {
       } else if (e.key === "Enter") {
         e.preventDefault();
         executeCurrent();
-      } else if (e.key === "Tab") {
-        e.preventDefault();
-        setRecentExpanded((v) => !v);
       }
       return;
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelected((i) => Math.min(listCount - 1, i + 1));
+      setSelected((i) => Math.min(Math.max(0, listCount - 1), i + 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setSelected((i) => Math.max(0, i - 1));
@@ -360,12 +576,12 @@ export function App() {
   }, [selected, expanded, isGrid]);
 
   const p = pluginState.plugin;
-  const showList = mode === "search" && !isGrid && (expanded ? expanded.cmds.length > 0 : results.length > 0);
+  const showList = mode === "search" && queryStatus !== "error" && !isGrid && (expanded ? expanded.cmds.length > 0 : results.length > 0);
   return (
     <div className="shell">
       <div className="header">
         {mode === "plugin" && (
-          <button className="back" title="返回搜索 (Esc)" onClick={() => boxkit.exitPlugin()}>
+          <button className="back" title="返回搜索 (Esc)" aria-label="返回搜索" onClick={() => boxkit.exitPlugin()}>
             ‹
           </button>
         )}
@@ -381,47 +597,98 @@ export function App() {
               ? pluginState.subinput?.placeholder ?? `${p?.displayName ?? "插件"}已启动（未接管搜索框）`
               : "搜索功能 / 粘贴文件、图片"
           }
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => onInputChange(e.target.value)}
           onKeyDown={onKeyDown}
+          aria-label="搜索功能"
+          aria-controls={mode === "search" ? listId : undefined}
+          aria-activedescendant={mode === "search" ? activeResultId : undefined}
+          aria-expanded={mode === "search" ? showList || isGrid : undefined}
+          aria-autocomplete="list"
           spellCheck={false}
           autoFocus
         />
-        {mode === "plugin" && <span className="p-name">{p?.displayName}</span>}
-        {mode === "search" && <img className="app-mark" src={BRAND_LOGO} alt="" draggable={false} />}
+        {mode === "plugin" && (
+          <>
+            <span className="p-name">{p?.displayName}</span>
+            {p && (
+              <button
+                className="plugin-toolbar-button icon-only"
+                title="插件设置"
+                aria-label="插件设置"
+                onClick={() => boxkit.openPluginSettings(p.name)}
+              >
+                ⚙
+              </button>
+            )}
+            {p && (
+              <button
+                className="plugin-toolbar-button"
+                title="脱离为独立窗口 (Ctrl+D)"
+                aria-label="脱离为独立窗口"
+                onClick={() => detachCurrentPlugin(p.name)}
+              >
+                ⤢ 脱离
+              </button>
+            )}
+          </>
+        )}
+        {mode === "search" && (
+          <button
+            className="profile-entry"
+            title="设置与本地概览"
+            aria-label="打开设置与本地概览"
+            onClick={() => boxkit.openProfile()}
+          >
+            B
+          </button>
+        )}
       </div>
 
       {isGrid && (
-        <div className="grid-scroll grid-only" ref={listRef}>
+        <div
+          className="grid-scroll grid-only"
+          ref={listRef}
+          id={listId}
+          role="grid"
+          aria-label="搜索结果"
+          aria-rowcount={gridGroups.length}
+        >
           {gridGroups.map((g) => (
-            <div className="grid-group" key={g.key}>
-              <div className="group-head">
+            <div className="grid-group" key={g.key} role="row">
+              <div className="group-head" role="presentation">
                 <span className="group-title">{g.title}</span>
                 {g.action && (
-                  <span
+                  <button
+                    type="button"
                     className="group-action"
                     onClick={() => {
                       if (g.key === "recent") setRecentExpanded((v) => !v);
                     }}
                   >
                     {g.action}
-                  </span>
+                  </button>
                 )}
               </div>
-              <div className="icon-grid">
+              <div className="icon-grid" role="row" aria-label={g.title}>
                 {g.items.map((r) => {
                   const idx = flatGrid.indexOf(r);
+                  const itemId = `search-gridcell-${idx}`;
                   return (
-                  <div
-                    key={g.key + r.id}
-                    className={`g-item ${idx === selected ? "active" : ""}`}
-                    onMouseEnter={() => setSelected(idx)}
-                    onClick={() => executeGridItem(r)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      void togglePinned(r.id);
-                    }}
-                    title={`${r.subtitle ?? ""}${r.pinned ? " · 已固定" : ""}`}
-                  >
+                    <div
+                      key={g.key + r.id}
+                      id={itemId}
+                      className={`g-item ${idx === selected ? "active" : ""}`}
+                      role="gridcell"
+                      aria-selected={idx === selected}
+                      tabIndex={-1}
+                      onMouseEnter={() => setSelected(idx)}
+                      onClick={() => executeGridItem(r)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        openContextMenu(r, event.clientX, event.clientY);
+                      }}
+                      title={`${r.subtitle ?? ""}${r.pinned ? " · 已固定" : ""}`}
+                    >
                       <ResultIcon r={r} size={48} />
                       <span className="g-label">{r.title}</span>
                     </div>
@@ -434,7 +701,7 @@ export function App() {
       )}
 
       {showList && (
-        <div className="results" ref={listRef}>
+        <div className="results" ref={listRef} id={listId} role="listbox" aria-label="搜索结果">
           {expanded && <div className="section-label">「{expanded.base.title}」的关键字</div>}
           {mode === "search" && !expanded && query && (
             <div className="section-label">最佳匹配</div>
@@ -445,12 +712,13 @@ export function App() {
               return (
                 <div
                   key={`${expanded.base.id}:${cmd}`}
+                  id={`search-option-command-${i}`}
                   className={`r-item ${i === selected ? "active" : ""}`}
+                  role="option"
+                  aria-selected={i === selected}
+                  tabIndex={-1}
                   onMouseEnter={() => setSelected(i)}
-                  onClick={() => {
-                    void boxkit.execute({ ...expanded.base, payload: cmd, cmdType: "over" });
-                    setTimeout(() => boxkit.hide(), 150);
-                  }}
+                  onClick={() => void executeResult({ ...expanded.base, payload: cmd, cmdType: "over" }, true)}
                 >
                   <ResultIcon r={expanded.base} />
                   <div className="r-main">
@@ -467,12 +735,16 @@ export function App() {
             return (
               <div
                 key={r.id}
+                id={`search-option-${i}`}
                 className={`r-item ${i === selected ? "active" : ""}`}
+                role="option"
+                aria-selected={i === selected}
+                tabIndex={-1}
                 onMouseEnter={() => setSelected(i)}
                 onClick={() => executeAt(i)}
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  void togglePinned(r.id);
+                  openContextMenu(r, event.clientX, event.clientY);
                 }}
               >
                 <ResultIcon r={r} />
@@ -488,8 +760,10 @@ export function App() {
                 </div>
                 {badge && <span className={`r-badge ${badge.dim ? "dim" : ""}`}>{badge.label}</span>}
                 {expandable && (
-                  <span
+                  <button
+                    type="button"
                     className="r-expand"
+                    aria-label={`展开 ${r.title} 的副命令`}
                     title="展开全部关键字 (→)"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -498,7 +772,7 @@ export function App() {
                     }}
                   >
                     ›
-                  </span>
+                  </button>
                 )}
               </div>
             );
@@ -507,12 +781,54 @@ export function App() {
       )}
 
       {mode === "search" && !isGrid && !showList && (
-        <div className="empty">{query ? "没有匹配结果" : "输入以搜索；插件市场在设置中"}</div>
+        <div className={`empty ${showQueryError ? "state-error" : ""}`}>
+          {showQueryError ? (
+            <div className="state-panel" role="alert" aria-live="assertive">
+              <span>{queryError ?? "搜索失败，请重试"}</span>
+              <button type="button" className="state-action" onClick={retryQuery} disabled={showQueryLoading}>
+                重试
+              </button>
+            </div>
+          ) : showQueryLoading ? (
+            <div className="state-panel" role="status" aria-live="polite">
+              <span className="spinner" aria-hidden="true" />
+              <span>搜索中…</span>
+            </div>
+          ) : query ? (
+            "没有匹配结果"
+          ) : (
+            "输入以搜索；插件市场在设置中"
+          )}
+        </div>
+      )}
+
+      {mode === "search" && showQueryLoading && showList && (
+        <div className="inline-status" role="status" aria-live="polite">
+          <span className="spinner" aria-hidden="true" />
+          正在更新结果
+        </div>
+      )}
+
+      {executionStatus === "loading" && (
+        <div className="inline-status execution-status" role="status" aria-live="polite">
+          <span className="spinner" aria-hidden="true" />
+          正在打开
+        </div>
+      )}
+      {executionStatus === "error" && executionErrorMessage && (
+        <div className="execution-error" role="alert" aria-live="assertive">
+          <span>{executionErrorMessage}</span>
+          <button type="button" className="state-action" onClick={retryExecution} disabled={!executionRetry}>
+            重试
+          </button>
+          <button type="button" className="state-action" onClick={() => void copyText(executionErrorMessage)}>
+            复制错误
+          </button>
+        </div>
       )}
 
       {mode === "plugin" && <div className="plugin-hint">Esc 返回搜索面板 · 内容区域由插件提供</div>}
 
-      {!isGrid && (
       <div className="footer">
         <span>↑↓←→ 选择</span>
         <span>↵ 打开</span>
@@ -522,11 +838,37 @@ export function App() {
         <span>{mode === "plugin" ? "Esc 返回" : "Esc 隐藏"}</span>
         <span className="spacer" />
         {mode === "search" && (
-          <span className="f-entry" title="插件市场与设置" onClick={() => boxkit.openSettings()}>
+          <button type="button" className="f-entry" title="插件市场与设置" onClick={() => boxkit.openSettings()}>
             ⚙ 设置 / 市场
-          </span>
+          </button>
         )}
       </div>
+
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="context-menu"
+          role="menu"
+          aria-label={`${contextMenu.result.title} 上下文菜单`}
+          style={{ left: Math.min(contextMenu.x, Math.max(8, window.innerWidth - 190)), top: Math.min(contextMenu.y, Math.max(8, window.innerHeight - 110)) }}
+        >
+          <button type="button" role="menuitem" onClick={() => { void togglePinned(contextMenu.result.id); setContextMenu(null); inputRef.current?.focus(); }}>
+            {contextMenu.result.pinned || pinnedIds.has(contextMenu.result.id) ? "取消固定" : "固定"}
+          </button>
+          {contextMenu.result.kind === "plugin" && contextMenu.result.pluginId && (
+            <button type="button" role="menuitem" onClick={() => { boxkit.openPluginSettings(contextMenu.result.pluginId!); setContextMenu(null); }}>
+              插件设置
+            </button>
+          )}
+          {contextValue && (
+            <button type="button" role="menuitem" onClick={() => { void copyResultValue(contextValue, "路径"); setContextMenu(null); inputRef.current?.focus(); }}>
+              复制路径
+            </button>
+          )}
+          <button type="button" role="menuitem" onClick={() => { setContextMenu(null); inputRef.current?.focus(); }}>
+            取消
+          </button>
+        </div>
       )}
 
       {clipboardCaptureError && <div className="toast" role="alert">{clipboardCaptureError}</div>}

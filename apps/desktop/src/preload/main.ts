@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 // 注意：沙箱 preload 只允许引入无 Node 内建依赖的子模块（ipc.ts 仅常量）
 import { IPC } from "@boxkit/shared/ipc";
 
@@ -8,11 +8,25 @@ import { IPC } from "@boxkit/shared/ipc";
  */
 const api = {
   // 搜索
-  query: (text: string) => ipcRenderer.invoke(IPC.searchQuery, text),
+  query: (text: string | import("@boxkit/shared").InputPayload) => ipcRenderer.invoke(IPC.searchQuery, text),
   execute: (result: unknown) => ipcRenderer.invoke(IPC.searchExecute, result),
   hide: () => ipcRenderer.send(IPC.searchHide),
   openSettings: () => ipcRenderer.send(IPC.uiOpenSettings),
+  openPluginSettings: (pluginId: string) => ipcRenderer.send(IPC.uiOpenSettings, {
+    tab: "plugins",
+    view: "installed",
+    pluginId,
+  }),
+  openProfile: () => ipcRenderer.send(IPC.uiOpenProfile),
   sendInput: (text: string) => ipcRenderer.send(IPC.searchInput, text),
+  /** Electron 44 已移除 File.path；只向搜索 renderer 暴露受控路径提取。 */
+  getPathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
   onInputCommand: (cb: (command: string, value?: unknown) => void) => {
     const bind = (channel: string) => {
       const l = (_unknown: unknown, value?: unknown) => cb(channel, value);
@@ -67,6 +81,8 @@ const api = {
   // 配置
   configGet: () => ipcRenderer.invoke(IPC.configGet),
   configSet: (patch: unknown) => ipcRenderer.invoke(IPC.configSet, patch),
+  overviewData: () => ipcRenderer.invoke(IPC.overviewData),
+  overviewOpenApp: (appPath: string) => ipcRenderer.invoke(IPC.overviewOpenApp, appPath),
 
   favorites: {
     get: () => ipcRenderer.invoke(IPC.favoritesGet),
@@ -112,6 +128,10 @@ const api = {
   appInfo: () => ipcRenderer.invoke(IPC.appInfo),
   quit: () => ipcRenderer.send(IPC.appQuit),
   openLogs: () => ipcRenderer.send(IPC.appOpenLogs),
+
+  // 插件独立窗口（search renderer）
+  detachPlugin: (pluginName: string) => ipcRenderer.invoke(IPC.pluginDetach, pluginName),
+  reattachPlugin: (pluginName: string) => ipcRenderer.invoke(IPC.pluginReattach, pluginName),
 };
 
 contextBridge.exposeInMainWorld("boxkit", api);
