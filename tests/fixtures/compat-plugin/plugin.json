@@ -1,0 +1,22 @@
+{
+  "name": "compat-fixture",
+  "displayName": "bk/legacy 兼容 Fixture",
+  "version": "1.0.0",
+  "description": "Electron compatibility acceptance fixture",
+  "author": "BoxKit tests",
+  "main": "index.html",
+  "preload": "preload.js",
+  "permissions": ["clipboard", "db", "screen", "window"],
+  "features": [
+    {
+      "code": "compat",
+      "explain": "bk/legacy 兼容验收",
+      "cmds": ["compat-fixture", "bk compat"]
+    },
+    {
+      "code": "redirect-target",
+      "explain": "兼容 redirect 目标",
+      "cmds": ["compat redirect target"]
+    }
+  ]
+}

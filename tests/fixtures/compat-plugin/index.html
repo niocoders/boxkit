@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bk/legacy 兼容 Fixture</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        color: #172033;
+        background: #f5f7fb;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 560px; }
+      main { padding: 24px 28px 36px; }
+      header { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 20px; }
+      h1 { margin: 0; font-size: 23px; font-weight: 700; letter-spacing: 0; }
+      p { margin: 6px 0 0; color: #65728a; font-size: 13px; }
+      .badge { border: 1px solid #c8d4eb; background: #fff; color: #3b568d; border-radius: 6px; padding: 7px 10px; font-size: 12px; white-space: nowrap; }
+      section { background: #fff; border: 1px solid #dfe5f0; border-radius: 8px; overflow: hidden; }
+      .section-title { padding: 11px 14px; border-bottom: 1px solid #e7ebf3; color: #52617a; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+      .row { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 14px; align-items: center; min-height: 46px; padding: 9px 14px; border-bottom: 1px solid #eef1f6; }
+      .row:last-child { border-bottom: 0; }
+      .label { color: #53617a; font-size: 13px; }
+      [data-capability] { min-width: 0; overflow-wrap: anywhere; color: #9a6b16; font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+      [data-status="pass"] { color: #18794e; }
+      [data-status="fail"] { color: #bc3d3d; }
+      [data-status="pending"] { color: #9a6b16; }
+      .foot { margin-top: 14px; color: #7c8799; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>bk/legacy 兼容验收</h1>
+          <p>真实 Electron 插件页，结果由兼容 API 回调填充</p>
+        </div>
+        <div class="badge" id="run-status" data-capability="run-status" data-status="pending">运行中</div>
+      </header>
+
+      <section>
+        <div class="section-title">生命周期与窗口</div>
+        <div class="row"><span class="label">onPluginEnter payload</span><span data-capability="enter-payload" data-status="pending">等待进入事件</span></div>
+        <div class="row"><span class="label">setSubInput</span><span data-capability="subinput-config" data-status="pending">等待设置</span></div>
+        <div class="row"><span class="label">onSubInputChange</span><span data-capability="subinput-change" data-status="pending">等待主搜索框输入</span></div>
+        <div class="row"><span class="label">窗口尺寸变化</span><span data-capability="window-resize" data-status="pending">等待脚本触发</span></div>
+        <div class="row"><span class="label">onPluginOut</span><span data-capability="out-event" data-status="pending">等待退出事件</span></div>
+        <div class="row"><span class="label">redirect enter payload</span><span data-capability="redirect-enter" data-status="pending">等待跳转进入事件</span></div>
+      </section>
+
+      <section>
+        <div class="section-title">存储与系统</div>
+        <div class="row"><span class="label">KV db put/get/remove</span><span data-capability="kv" data-status="pending">等待存储操作</span></div>
+        <div class="row"><span class="label">同步文档 db / rev 冲突</span><span data-capability="doc" data-status="pending">等待文档操作</span></div>
+        <div class="row"><span class="label">clipboard 文本读写</span><span data-capability="clipboard" data-status="pending">等待剪贴板操作</span></div>
+        <div class="row"><span class="label">display size</span><span data-capability="display" data-status="pending">等待显示器信息</span></div>
+        <div class="row"><span class="label">未声明 shell 权限</span><span data-capability="permission-reject" data-status="pending">等待拒绝结果</span></div>
+        <div class="row"><span class="label">redirect 返回 / enter</span><span data-capability="redirect-return" data-status="pending">等待跳转结果</span></div>
+      </section>
+
+      <div class="foot">fixture preload: <span id="preload-state">检查中</span></div>
+    </main>
+
+    <script>
+      const bk = window.bk;
+      const legacy = window.utools;
+      const results = Object.create(null);
+      let enterCount = 0;
+
+      function text(value) {
+        if (typeof value === "string") return value;
+        try { return JSON.stringify(value); } catch { return String(value); }
+      }
+
+      function setResult(name, value, ok) {
+        const el = document.querySelector(`[data-capability="${name}"]`);
+        if (!el) return;
+        const passed = ok !== false;
+        results[name] = { value, ok: passed };
+        el.dataset.status = passed ? "pass" : "fail";
+        el.textContent = text(value);
+      }
+
+      window.__compatResults = results;
+      window.__compatResize = function () {
+        const returned = legacy.setExpendHeight(760);
+        setResult("window-resize", { returned }, returned === true);
+        return returned;
+      };
+
+      legacy.onPluginEnter((payload) => {
+        enterCount += 1;
+        const value = {
+          count: enterCount,
+          code: payload?.code,
+          type: payload?.type,
+          payload: payload?.payload,
+        };
+        setResult(enterCount === 1 ? "enter-payload" : "redirect-enter", value, Boolean(payload?.code));
+      });
+
+      legacy.onSubInputChange((value) => {
+        setResult("subinput-change", value, typeof value === "string");
+      });
+
+      legacy.onPluginOut((processExit) => {
+        setResult("out-event", { processExit: Boolean(processExit) }, true);
+      });
+
+      legacy.onPluginDetach(() => {
+        results.detach = { value: true, ok: true };
+      });
+
+      async function run() {
+        try {
+          const preload = globalThis.__compatFixturePreload;
+          document.getElementById("preload-state").textContent = preload?.loaded ? "loaded" : "missing";
+
+          legacy.setSubInput({ placeholder: "输入兼容测试文本", isFocus: true });
+          setResult("subinput-config", "输入兼容测试文本", true);
+
+          const kvKey = "compat-kv";
+          await bk.db.put(kvKey, { source: "bk", value: "stored" });
+          const kvValue = await bk.db.get(kvKey);
+          await bk.db.remove(kvKey);
+          const kvRemoved = await bk.db.get(kvKey);
+          setResult("kv", { put: true, get: kvValue, remove: kvRemoved === null }, kvValue?.value === "stored" && kvRemoved === null);
+
+          const docId = "compat-doc";
+          const firstPut = legacy.db.put({ _id: docId, data: "v1" });
+          const firstGet = legacy.db.get(docId);
+          const conflict = legacy.db.put({ _id: docId, data: "stale", _rev: "stale-revision" });
+          const secondPut = legacy.db.put({ _id: docId, data: "v2", _rev: firstPut.rev });
+          const finalGet = legacy.db.get(docId);
+          const docOk = firstPut.ok === true && firstGet?._rev === firstPut.rev && conflict.ok === false && secondPut.ok === true && finalGet?.data === "v2";
+          setResult("doc", { put: firstPut, get: firstGet, conflict, update: secondPut, final: finalGet }, docOk);
+
+          const clipboardValue = "boxkit-compat-clipboard";
+          await bk.writeClipboardText(clipboardValue);
+          const bkRead = await bk.readClipboardText();
+          legacy.copyText(clipboardValue + "-legacy");
+          const legacyRead = await legacy.readClipboardText();
+          setResult("clipboard", { bkRead, legacyRead }, bkRead === clipboardValue && legacyRead === clipboardValue + "-legacy");
+
+          const display = await bk.getPrimaryDisplaySize();
+          setResult("display", display, Number(display?.width) > 0 && Number(display?.height) > 0);
+
+          let rejected = false;
+          try {
+            await bk.openExternal("https://example.com/boxkit-compat-permission-check");
+          } catch {
+            rejected = true;
+          }
+          setResult("permission-reject", { rejected }, rejected);
+
+          const redirected = legacy.redirect({ cmd: "compat redirect target", payload: "redirect-payload" });
+          setResult("redirect-return", { returned: redirected }, redirected === true);
+          document.getElementById("run-status").dataset.status = "pass";
+          document.getElementById("run-status").textContent = "ready";
+        } catch (error) {
+          setResult("run-status", String(error?.message || error), false);
+          document.getElementById("run-status").textContent = "failed";
+        }
+      }
+
+      void run();
+    </script>
+  </body>
+</html>

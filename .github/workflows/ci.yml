@@ -20,6 +20,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Prepare Electron runtime
+        run: node -e "console.log(require('electron'))"
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm audit:governance

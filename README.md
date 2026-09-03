@@ -71,7 +71,7 @@ tools/                       图标生成、更新服务器示例和治理检查
 
 ## 测试
 
-当前测试覆盖搜索评分、结果排序、清单归一化、路径安全、剪贴板过滤、暂存标识和市场摘要。`pnpm ui:smoke` 会启动真实 Electron 并通过 Playwright CDP 验证搜索输入、键盘导航、首次市场跳转、市场卡片、已安装空态和设置开关；截图与报告写入 `artifacts/electron-ui/`。
+当前测试覆盖搜索评分、结果排序、清单归一化、路径安全、剪贴板过滤、暂存标识和市场摘要。`pnpm ui:smoke` 会启动真实 Electron 并通过 Playwright CDP 验证搜索输入、键盘导航、首次市场跳转、市场卡片、已安装空态和设置开关；`tools/electron-compat-smoke.mjs` 使用本地 fixture 插件验证兼容 API（生命周期、子输入、KV/文档存储、剪贴板、权限拒绝、跳转和窗口尺寸）。截图与报告写入 `artifacts/`。
 
 ## 许可证
 

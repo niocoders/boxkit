@@ -11,6 +11,10 @@ const allowedCompat = new Set([
   "packages/shared/src/manifest.test.ts",
   "packages/shared/src/ipc.ts",
   "packages/shared/src/types.ts",
+  "tests/fixtures/compat-plugin/index.html",
+  "tests/fixtures/compat-plugin/plugin.json",
+  "tools/electron-compat-smoke.mjs",
+  "tools/electron-ui-smoke.mjs",
   "NOTICE",
 ]);
 const forbidden = [
