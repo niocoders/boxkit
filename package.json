@@ -1,6 +1,6 @@
 {
   "name": "boxkit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "BoxKit — 跨平台效率启动器与插件平台",
   "license": "MIT",
